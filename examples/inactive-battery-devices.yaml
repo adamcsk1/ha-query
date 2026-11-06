@@ -1,0 +1,21 @@
+type: custom:ha-query-card
+title: Inactive battery devices (14+ days)
+group_by: area
+refresh_seconds: 21600
+query:
+  from: devices
+  where:
+    has_entity:
+      device_class: battery
+    history:
+      no_changes_for: 14d # Change this duration to suit your history window.
+      scope: all_entities
+  columns:
+    - device.name
+    - battery.level
+    - history.last_change
+    - history.days_inactive
+  sort:
+    by: history.days_inactive
+    descending: true
+  limit: 100

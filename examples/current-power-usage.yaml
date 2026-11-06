@@ -1,0 +1,19 @@
+type: custom:ha-query-card
+title: Current power usage
+group_by: area
+refresh_seconds: 60
+query:
+  from: entities
+  where:
+    device_class: power
+    state:
+      gt: 0
+  columns:
+    - entity.name
+    - device.name
+    - entity.state
+    - entity.unit
+  sort:
+    by: entity.state
+    descending: true
+  limit: 100

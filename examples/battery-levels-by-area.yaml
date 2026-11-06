@@ -1,0 +1,17 @@
+type: custom:ha-query-card
+title: Battery levels by area
+group_by: area
+refresh_seconds: 300
+query:
+  from: entities
+  where:
+    device_class: battery
+  columns:
+    - entity.name
+    - device.name
+    - entity.state
+    - entity.unit
+  sort:
+    by: entity.state
+    descending: false
+  limit: 500

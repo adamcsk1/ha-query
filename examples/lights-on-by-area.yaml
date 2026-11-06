@@ -1,0 +1,22 @@
+type: custom:ha-query-card
+title: Lights on by area
+group_by: area
+refresh_seconds: 60
+query:
+  from: entities
+  where:
+    all:
+      - field: domain
+        op: eq
+        value: light
+      - field: entity.state
+        op: eq
+        value: "on"
+  columns:
+    - entity.name
+    - device.name
+    - entity.state
+  sort:
+    by: entity.name
+    descending: false
+  limit: 500
