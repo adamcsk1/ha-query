@@ -1,0 +1,10 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Set up HA Query",
+        "description": "Enable read-only YAML queries and register the bundled Lovelace card."
+      }
+    }
+  }
+}
