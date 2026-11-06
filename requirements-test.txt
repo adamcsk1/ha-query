@@ -1,0 +1,3 @@
+# Match the first supported Home Assistant release and its API contracts.
+homeassistant==2026.11.0
+ruff==0.14.3

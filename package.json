@@ -1,0 +1,17 @@
+{
+  "name": "ha-query-checks",
+  "private": true,
+  "engines": {"node": ">=22.13.0"},
+  "scripts": {
+    "lint": "eslint custom_components/ha_query/frontend tests/*.cjs eslint.config.mjs",
+    "test": "node --test tests/test_card.cjs"
+  },
+  "devDependencies": {
+    "eslint": "10.14.0",
+    "@eslint/js": "10.0.1",
+    "globals": "16.5.0"
+  },
+  "overrides": {
+    "minimatch": "11.0.1"
+  }
+}
