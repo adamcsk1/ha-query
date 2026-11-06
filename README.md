@@ -2,10 +2,6 @@
 
 [![CI](https://github.com/adamcsk1/ha-query/actions/workflows/tests.yml/badge.svg)](https://github.com/adamcsk1/ha-query/actions/workflows/tests.yml)
 
-<p align="center">
-  <img src="brand/icon.png" width="128" alt="HA Query">
-</p>
-
 A read-only [Home Assistant](https://www.home-assistant.io/) integration with a bundled dashboard card. Query live entities and registered devices using structured YAML filters, then group results by area.
 
 Query any loaded entity domain, compare state and nested attributes, combine conditions, and include device or area metadata. This is a bounded query language, not raw SQL, Jinja, or arbitrary code execution.
