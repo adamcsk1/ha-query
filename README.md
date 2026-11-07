@@ -59,6 +59,7 @@ lovelace:
 - [Current power usage](examples/current-power-usage.yaml): live power readings above zero.
 - [Lights on by area](examples/lights-on-by-area.yaml): generic filter combining domain and state conditions.
 - [Filtered sensors by area](examples/filtered-sensors-by-area.yaml): entity ID/name wildcards and exclusions.
+- [Unavailable power and battery sensors](examples/unavailable-power-and-battery.yaml): generic state filters that preserve `unknown` and `unavailable` readings.
 
 These are complete card configurations. Copy an example into a **Manual** dashboard card and adjust it as needed.
 
@@ -110,7 +111,7 @@ Operators:
 | `starts_with`, `ends_with` | Case-sensitive text matching |
 | `exists` | Boolean check for a present, non-null value |
 
-Missing values do not match ordinary comparisons, including `ne`. Use `exists: false` or `not` when needed. `all` and `any` accept non-empty lists; `not` accepts exactly one filter. Filters allow up to 100 conditions and 8 nested group levels.
+Missing values do not match ordinary comparisons, including `ne`. Use `exists: false` or `not` when needed. `all` and `any` accept non-empty lists of up to 100 filters; `not` accepts exactly one filter. Filters allow up to 100 conditions, 256 filter nodes (including empty mappings and groups), and 8 nested group levels. An empty `where: {}` matches all readable entities.
 
 ### Shorthand
 
@@ -148,7 +149,7 @@ where:
       - "*Disabled*"
 ```
 
-The original power and battery shorthand retains its sensor-domain, unit, and missing-reading behavior. Lists containing those classes apply the same requirements per class. Use explicit `entity.attributes.device_class` conditions for unrestricted generic battery queries.
+The original power and battery shorthand retains its sensor-domain, unit, and missing-reading behavior. Lists containing those classes apply the same requirements per class. Generic filters preserve raw states, including `unknown` and `unavailable`; only `parse_state: true` converts embedded numeric readings. Use explicit `entity.attributes.device_class` conditions for unrestricted generic power and battery queries.
 
 ### Embedded state units
 
@@ -178,7 +179,9 @@ Available fields include:
 - `battery.level` for device results
 - `history.last_change`, `history.days_inactive`, `history.status` for device history results
 
-Select up to 32 unique columns. Sort by any supported field, including an attribute that is not selected as a column. Arrays and objects selected as columns display as JSON text. Responses are limited to 500 rows and 4 MB.
+Select up to 32 unique columns. Sort by any supported field, including an attribute that is not selected as a column. Arrays and objects selected as columns display as JSON text. Date/time attributes use Home Assistant's ISO formatting; sets and tuples become arrays, and dataclass attributes become objects. Unsupported objects and nonfinite numbers are rejected.
+
+Responses are limited to 500 rows and 4 MB, including the WebSocket result envelope. Response preparation stops when the byte budget is exceeded instead of encoding an oversized result in full. Nested output is also bounded to 32 levels and 100,000 traversal steps across values and fields; select smaller attribute paths if these limits are exceeded.
 
 ### Group by area
 
@@ -188,7 +191,7 @@ The default refresh interval is five minutes. Set `refresh_seconds` to a number 
 
 ## Device queries and history
 
-Use `from: devices`. `has_entity` accepts the same generic entity filters, wildcards, and exclusions and requires at least one matching loaded entity. Omitting it selects all readable registered devices with enabled entities. Additional device conditions belong in `has_entity` when they describe the matching entity. With `history.scope: matching_entities`, history uses only entities remaining after exclusions; device permission checks still cover every participating entity.
+Use `from: devices`. `has_entity` accepts the same generic entity filters, including a single `field`/`op`/`value` condition, boolean groups, wildcards, and exclusions. A non-empty selector requires at least one matching loaded entity. Omitting it or using `has_entity: {}` selects all readable registered devices with enabled entities. Additional device conditions belong in `has_entity` when they describe the matching entity. With `history.scope: matching_entities`, history uses only entities remaining after exclusions; device permission checks still cover every participating entity.
 
 ```yaml
 from: devices
@@ -221,7 +224,9 @@ recorder:
   auto_purge: true
 ```
 
-Increasing retention does not restore purged history. Devices with missing or excluded history are omitted rather than marked inactive. `last_updated_ts` tracks state or attribute changes; it does not prove radio communication.
+Increasing retention does not restore purged history. Devices with missing or excluded history are omitted rather than marked inactive. History queries require Recorder to be running and recording, and reject inactivity when a selected entity has a recent live state or attribute update, even if that update has not reached the database yet. Devices whose enabled entity membership changes during a history read are omitted until the next query.
+
+Recorder interruptions and past exclusions can leave gaps that retained timestamps cannot prove absent. Re-enabling recording does not fill those gaps. Results describe the retained change evidence, not a guarantee of uninterrupted monitoring. `last_updated_ts` tracks state or attribute changes; it does not prove radio communication.
 
 ## Development
 

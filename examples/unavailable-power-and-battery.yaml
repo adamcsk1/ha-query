@@ -1,0 +1,24 @@
+type: custom:ha-query-card
+title: Unavailable power and battery sensors
+group_by: area
+refresh_seconds: 60
+query:
+  from: entities
+  where:
+    all:
+      - field: domain
+        op: eq
+        value: sensor
+      - field: entity.attributes.device_class
+        op: in
+        value: [power, battery]
+      - field: entity.state
+        op: in
+        value: [unknown, unavailable]
+  columns:
+    - entity.name
+    - device.name
+    - entity.state
+  sort:
+    by: entity.name
+  limit: 500

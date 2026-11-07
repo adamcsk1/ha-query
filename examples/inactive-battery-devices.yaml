@@ -6,9 +6,11 @@ query:
   from: devices
   where:
     has_entity:
-      device_class: battery
+      field: entity.attributes.device_class
+      op: eq
+      value: battery
     history:
-      no_changes_for: 14d # Change this duration to suit your history window.
+      no_changes_for: 14d # Recorder must be running with enough retained history.
       scope: all_entities
   columns:
     - device.name

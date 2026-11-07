@@ -8,14 +8,18 @@ Minimum supported target: Home Assistant **2026.11.0**, Python **3.14.2+**. CI r
 
 ## Structure
 
-- `custom_components/ha_query/__init__.py`: HA lifecycle, permissions, row construction, history orchestration, and WebSocket endpoint.
+- `custom_components/ha_query/__init__.py`: HA lifecycle, resource ownership, and WebSocket endpoint.
 - `custom_components/ha_query/query_language.py`: pure filter validation, normalization, typed operators, and boolean evaluation.
+- `custom_components/ha_query/query_execution.py`: live row construction, permissions, device membership, and Recorder orchestration.
 - `custom_components/ha_query/query_engine.py`: bounded read-only SQLite access and sorting.
+- `custom_components/ha_query/query_response.py`: attribute projection and bounded HA-compatible response preparation.
 - `custom_components/ha_query/frontend/ha-query-card.js`: dependency-free card rendering, grouping, polling, and stale-response handling.
 - `examples/`: complete card configurations validated by tests.
 - `tests/test_query_language.py`: pure filter semantics and validation bounds.
 - `tests/test_integration.py`: HA API contracts, permissions, history, resources, examples, and response limits.
 - `tests/test_query_engine.py`: real temporary SQLite fixtures and sort behavior.
+- `tests/test_query_response.py`: response compatibility, serialization, and early resource bounds.
+- `tests/test_examples.py`: shipped card queries validated against HA and query schemas.
 - `tests/test_card.cjs`: dependency-free Node tests for card behavior.
 - `.github/workflows/tests.yml`: mandatory lint/test checks.
 
@@ -47,7 +51,7 @@ Test both validation and execution when changing the query grammar. `validate_qu
 - Never add raw SQL, Jinja, Python evaluation, arbitrary JavaScript, or user-supplied regular expressions.
 - Attribute access is dictionary-only with validated, bounded paths. Never expose the internal `_attributes` row member in WebSocket responses.
 - Keep SQL entity IDs parameter-bound and connections read-only. Do not weaken executor, timeout, concurrency, row, column, nesting, or response-size limits.
-- Missing or excluded history is not proof of inactivity.
+- Missing or excluded history is not proof of inactivity. Check Recorder health, current device membership, and recent live updates after database reads.
 - Entity areas override device areas; device history uses device area.
 - Resource cleanup deletes only the unchanged resource created and owned by this integration.
 - Disable/unload must stop query access without returning stale results.
