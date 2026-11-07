@@ -16,18 +16,22 @@ function fixture() {
   class Element {
     constructor(tag = 'custom-card') {
       this.tag = tag; this.children = []; this.style = {}; this.dataset = {}; this.attributes = {};
+      this.listeners = {}; this.events = [];
       this.classList = {add: (...names) => { this.className = `${this.className || ''} ${names.join(' ')}`.trim(); }};
     }
     setAttribute(name, value) { this.attributes[name] = String(value); }
     getAttribute(name) { return this.attributes[name]; }
     append(...children) { this.children.push(...children); }
-    replaceChildren(...children) { this.children = children; }
+    replaceChildren(...children) { this.children = children; this.textContent = ''; }
+    addEventListener(type, callback) { (this.listeners[type] ||= []).push(callback); }
+    dispatchEvent(event) { this.events.push(event); return true; }
     set innerHTML(value) { throw new Error('Unsafe HTML rendering'); }
   }
   const context = vm.createContext({
     HTMLElement: Element,
     document: {createElement: tag => new Element(tag)},
     customElements: {get: () => undefined, define: (name, cls) => { Card = cls; }},
+    CustomEvent: class CustomEvent { constructor(type, options) { this.type = type; Object.assign(this, options); } },
     window: {},
     setInterval: (callback, delay) => { intervals.set(++nextId, {callback, delay}); return nextId; },
     clearInterval: id => intervals.delete(id),
@@ -43,6 +47,23 @@ function fixture() {
 function descendants(node) {
   return [node, ...node.children.flatMap(descendants)];
 }
+
+test('explicit device, state and unit columns show only Device and State', async () => {
+  const {card, hass, requests} = fixture();
+  card.setConfig(config());
+  card.hass = hass;
+  const row = {
+    entity_id: 'binary_sensor.window', 'entity.name': 'Window sensor 3',
+    'device.name': 'Window sensor 3', 'entity.state': 'off', 'entity.unit': '',
+    domain: 'binary_sensor', 'entity.device_class': 'window', 'area.id': 'bedroom', 'area.name': 'Bedroom',
+  };
+  requests[0].resolve({columns: ['device.name', 'entity.state', 'entity.unit'], rows: [row]});
+  await tick();
+  assert.deepEqual(descendants(card).filter(node => node.getAttribute('role') === 'columnheader')
+    .map(node => node.textContent), ['Device', 'State']);
+  assert.deepEqual(descendants(card).filter(node => node.getAttribute('role') === 'cell')
+    .map(node => node.textContent), ['Window sensor 3', 'off']);
+});
 
 test('state_color accepts only booleans without disturbing valid configuration', () => {
   const {card, intervals} = fixture();
@@ -116,6 +137,115 @@ test('refreshing state removes active color when sensor becomes unavailable', as
   const cell = descendants(card).find(node => node.getAttribute('role') === 'cell');
   assert.equal(cell.textContent, 'unavailable');
   assert.equal(cell.style.color, '');
+});
+
+test('entity_links is strict, opt-in, and preserves name text', async () => {
+  for (const entity_links of [undefined, false]) {
+    const {card, hass, requests} = fixture();
+    card.setConfig({...config(), entity_links});
+    card.hass = hass;
+    requests[0].resolve({columns: ['entity.name', 'entity.state'], rows: [
+      {entity_id: 'binary_sensor.front_door', 'entity.name': 'Front door', 'entity.state': 'on'},
+    ]});
+    await tick();
+    const cells = descendants(card).filter(node => node.getAttribute('role') === 'cell');
+    assert.equal(cells[0].textContent, 'Front door');
+    assert.equal(descendants(card).filter(node => node.tag === 'button').length, 0);
+    assert.deepEqual(card.events, []);
+  }
+  const {card, intervals} = fixture();
+  card.setConfig({...config(), entity_links: true});
+  const timer = [...intervals.keys()][0];
+  for (const entity_links of ['true', 'false', 0, 1, null, [], {}]) {
+    assert.throws(() => card.setConfig({...config(), entity_links}), /entity_links/);
+    assert.equal(card._config.entity_links, true);
+    assert.equal([...intervals.keys()][0], timer);
+  }
+});
+
+test('entity links open HA more-info with keyboard access and no URLs', async () => {
+  const {card, hass, requests} = fixture();
+  card.setConfig({...config(), entity_links: true});
+  card.hass = hass;
+  requests[0].resolve({columns: ['entity.name', 'entity.state'], rows: [
+    {entity_id: 'binary_sensor.front_door', 'entity.name': '<b>Front door</b>', 'entity.state': 'on'},
+  ]});
+  await tick();
+  const cells = descendants(card).filter(node => node.getAttribute('role') === 'cell');
+  const button = cells[0].children[0];
+  assert.equal(button.tag, 'button');
+  assert.equal(button.type, 'button');
+  assert.equal(button.getAttribute('aria-label'), 'More information: <b>Front door</b>');
+  assert.equal(button.title, 'binary_sensor.front_door');
+  assert.equal(button.textContent, '<b>Front door</b>');
+  assert.equal(cells[0].textContent, '');
+  assert.equal(cells[1].children.length, 0);
+  assert.equal(descendants(card).filter(node => node.tag === 'b' || node.tag === 'a').length, 0);
+  const activate = () => {
+    button.listeners.click[0]({});
+    const space = {key: ' ', repeat: false, preventDefault: () => { space.prevented = true; }};
+    button.listeners.keydown[0](space);
+    assert(space.prevented);
+    button.listeners.keydown[0]({...space, repeat: true});
+    button.listeners.keydown[0]({key: 'Enter'});
+  };
+  activate();
+  assert.equal(card.events.length, 2);
+  for (const event of card.events) {
+    assert.equal(event.type, 'hass-more-info');
+    assert.equal(event.bubbles, true);
+    assert.equal(event.composed, true);
+    assert.equal(event.detail.entityId, 'binary_sensor.front_door');
+    assert.equal(Object.keys(event.detail).length, 1);
+  }
+});
+
+test('entity ID links are fallback only without entity name column', async () => {
+  const {card, hass, requests, intervals} = fixture();
+  card.setConfig({...config(), entity_links: true});
+  card.hass = hass;
+  const rows = [
+    {entity_id: 'sensor.valid'},
+    {entity_id: 'https://evil.example'},
+    {entity_id: 'sensor.'},
+    {entity_id: 'sensor.' + 'x'.repeat(248)},
+    {entity_id: 'sensor.' + 'x'.repeat(249)},
+    {entity_id: 'sensor.valid newline\n'},
+    {entity_id: {}},
+    {},
+  ];
+  requests[0].resolve({columns: ['entity_id', 'entity.state'], rows});
+  await tick();
+  const cells = descendants(card).filter(node => node.getAttribute('role') === 'cell');
+  assert.equal(cells[0].children[0].tag, 'button');
+  assert.equal(cells[0].children[0].textContent, 'sensor.valid');
+  assert.equal(cells[0].children[0].getAttribute('aria-label'), 'More information: sensor.valid');
+  assert.equal(descendants(card).filter(node => node.tag === 'button').length, 2);
+  assert.equal(descendants(card).filter(node => node.tag === 'button')[1].title, 'sensor.' + 'x'.repeat(248));
+  assert.equal(cells.filter(cell => cell.dataset.label === 'Entity ID').length, rows.length);
+  assert.equal(cells.filter(cell => cell.dataset.label === 'State').length, rows.length);
+  [...intervals.values()][0].callback();
+  requests[1].resolve({columns: ['entity_id', 'entity.name'], rows: [{entity_id: 'sensor.valid', 'entity.name': 'Readable'}]});
+  await tick();
+  const namedCells = descendants(card).filter(node => node.getAttribute('role') === 'cell');
+  assert.equal(namedCells[0].children.length, 0);
+  assert.equal(namedCells[1].children[0].tag, 'button');
+});
+
+test('refresh replaces links and disables them after entity_links becomes false', async () => {
+  const {card, hass, requests} = fixture();
+  card.setConfig({...config(), entity_links: true});
+  card.hass = hass;
+  requests[0].resolve({columns: ['entity.name'], rows: [{entity_id: 'sensor.old', 'entity.name': 'Old'}]});
+  await tick();
+  card.setConfig({...config(), entity_links: false});
+  assert.equal(descendants(card).filter(node => node.tag === 'button').length, 0);
+  requests[0].resolve({columns: ['entity.name'], rows: [{entity_id: 'sensor.stale', 'entity.name': 'Stale'}]});
+  await tick();
+  assert.equal(requests.length, 2);
+  requests[1].resolve({columns: ['entity.name'], rows: [{entity_id: 'sensor.new', 'entity.name': 'New'}]});
+  await tick();
+  assert.equal(descendants(card).filter(node => node.tag === 'button').length, 0);
 });
 
 test('refresh settings are finite, bounded numbers', () => {

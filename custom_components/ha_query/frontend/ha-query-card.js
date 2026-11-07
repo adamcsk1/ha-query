@@ -25,6 +25,10 @@ const CARD_STYLES = `
   .haq-column-header { padding-top: 9px; padding-bottom: 9px; color: var(--secondary-text-color);
     background: var(--card-background-color); font-size: .75rem; font-weight: 600; }
   .haq-value-cell { text-align: right; }
+  .haq-entity-link { padding: 0; border: 0; background: none; color: var(--primary-color);
+    font: inherit; font-weight: inherit; text-align: inherit; overflow-wrap: anywhere; cursor: pointer; }
+  .haq-entity-link:hover { text-decoration: underline; }
+  .haq-entity-link:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
   .haq-cell:first-child { font-weight: 500; }
   @container (max-width: 440px) {
     .haq-grid { display: block; }
@@ -53,8 +57,10 @@ class HaQueryCard extends HTMLElement {
     if (config.group_by !== undefined && config.group_by !== 'area') {
       throw new Error('group_by must be area when specified');
     }
-    if (config.state_color !== undefined && typeof config.state_color !== 'boolean') {
-      throw new Error('state_color must be a boolean');
+    for (const option of ['state_color', 'entity_links']) {
+      if (config[option] !== undefined && typeof config[option] !== 'boolean') {
+        throw new Error(`${option} must be a boolean`);
+      }
     }
     const seconds = config.refresh_seconds ?? 300;
     if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds < 60 || seconds > 2147483) {
@@ -231,6 +237,7 @@ class HaQueryCard extends HTMLElement {
       for (const column of columns) {
         const cell = this._cell(this._value(row, column), column, 'cell');
         if (column === 'entity.state') cell.style.color = this._stateColor(row);
+        if (this._isEntityLink(row, column)) cell.replaceChildren(this._entityLink(row, cell.textContent));
         element.append(cell);
       }
       grid.append(element);
@@ -246,6 +253,33 @@ class HaQueryCard extends HTMLElement {
     cell.dataset.label = this._label(column);
     cell.textContent = value;
     return cell;
+  }
+  _isEntityLink(row, column) {
+    return this._config.entity_links
+      && (column === 'entity.name' || (column === 'entity_id' && !this._columns.includes('entity.name')))
+      && typeof row.entity_id === 'string' && row.entity_id.length <= 255
+      && /^[a-z0-9_]+\.[a-z0-9_]+$/.test(row.entity_id)
+      && !/[\n\r\u2028\u2029]/.test(row.entity_id);
+  }
+  _entityLink(row, value) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = value;
+    button.className = 'haq-entity-link';
+    button.setAttribute('aria-label', `More information: ${row['entity.name'] || row.entity_id}`);
+    button.title = row.entity_id;
+    const openEntity = () => this.dispatchEvent(new CustomEvent('hass-more-info', {
+      bubbles: true, composed: true, detail: {entityId: row.entity_id},
+    }));
+    button.addEventListener('click', openEntity);
+    button.addEventListener('keydown', event => {
+      // Native buttons activate on Enter; handle Space like HA keyboard controls.
+      if (event.key === ' ' && !event.repeat) {
+        event.preventDefault();
+        openEntity();
+      }
+    });
+    return button;
   }
   getCardSize() {
     const headings = this._config?.group_by === 'area' ? this._groups().length : 0;

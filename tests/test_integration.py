@@ -240,6 +240,18 @@ class IntegrationTests(unittest.IsolatedAsyncioTestCase):
                 validate.assert_called_once()
                 self.connection.send_error.assert_not_called()
 
+    async def test_explicit_columns_replace_all_default_headers(self):
+        self.add_entity('binary_sensor.window', 'window', 'off')
+        columns = ['device.name', 'entity.state', 'entity.unit']
+        await self.run_query(query(where={'domain': 'binary_sensor'}, columns=columns))
+        result = self.connection.send_result.call_args.args[1]
+        self.assertEqual(result['columns'], columns)
+        self.assertEqual(len(result['rows']), 1)
+        self.assertNotIn('entity_id', result['columns'])
+        self.assertNotIn('entity.name', result['columns'])
+        self.assertNotIn('area.id', result['columns'])
+        self.assertNotIn('area.name', result['columns'])
+
     async def test_generic_power_and_battery_states_remain_raw(self):
         self.add_entity('sensor.power', 'power', 'unknown')
         self.add_entity('sensor.battery', 'battery', '101')

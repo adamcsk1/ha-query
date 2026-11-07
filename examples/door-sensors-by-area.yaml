@@ -2,6 +2,7 @@ type: custom:ha-query-card
 title: Door sensors
 group_by: area
 state_color: true
+entity_links: true
 refresh_seconds: 60
 query:
   from: entities

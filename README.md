@@ -34,7 +34,7 @@ Query any loaded entity domain, compare state and nested attributes, combine con
 3. Go to **Settings - Devices & services - Add integration**, then select **HA Query**.
 4. Add a **Manual** dashboard card using one of the [examples](examples/).
 
-The integration registers its `/ha-query/ha-query-card.js` dashboard resource automatically where supported. Restart Home Assistant after updating; a hard browser refresh may also be required.
+The integration registers its `/ha-query/ha-query-card.js` dashboard resource automatically where supported. **Restart Home Assistant after every update to load backend changes, then hard-refresh the browser.** Restarting only the dashboard or refreshing the browser does not update the Python query service.
 
 To uninstall, remove dashboard cards and the integration first. HA Query removes only the unchanged resource it created; pre-existing or user-modified resources are preserved. Deleting files through HACS alone cannot perform resource cleanup.
 
@@ -180,7 +180,9 @@ Available fields include:
 - `battery.level` for device results
 - `history.last_change`, `history.days_inactive`, `history.status` for device history results
 
-Select up to 32 unique columns. Sort by any supported field, including an attribute that is not selected as a column. Arrays and objects selected as columns display as JSON text. Date/time attributes use Home Assistant's ISO formatting; sets and tuples become arrays, and dataclass attributes become objects. Unsupported objects and nonfinite numbers are rejected.
+Select up to 32 unique columns. **An explicit column list replaces all default UI columns.** For example, `device.name`, `entity.state`, and `entity.unit` display only **Device** and **State** (the unit is combined into the state value). Internal metadata needed for grouping, links, and colors does not create extra UI columns. If explicit columns still show the default headings after an update, restart HA and hard-refresh the browser to load matching backend and card versions.
+
+Sort by any supported field, including an attribute that is not selected as a column. Arrays and objects selected as columns display as JSON text. Date/time attributes use Home Assistant's ISO formatting; sets and tuples become arrays, and dataclass attributes become objects. Unsupported objects and nonfinite numbers are rejected.
 
 Responses are limited to 500 rows and 4 MB, including the WebSocket result envelope. Response preparation stops when the byte budget is exceeded instead of encoding an oversized result in full. Nested output is also bounded to 32 levels and 100,000 traversal steps across values and fields; select smaller attribute paths if these limits are exceeded.
 
@@ -197,6 +199,12 @@ Set `state_color: true` at the card level, alongside `query`, to color binary se
 Colors follow Home Assistant's theme fallback order: device class and state, binary sensor state, binary sensor active/inactive, then general active/inactive color. Custom themes can override these variables; for example, `state-binary_sensor-door-on-color` sets the open-door color. Unknown, unavailable, and missing states keep the normal text color.
 
 State text remains unchanged: a door sensor displays `on` for open and `off` for closed. Colors use the same query snapshot as the text and update on the card's normal refresh interval. Device class metadata is included automatically, so it does not need to be selected as a column. Missing or malformed device classes fall back to the domain colors; `entity.device_class` is null for non-text values or strings longer than 64 characters.
+
+### Entity links
+
+Set `entity_links: true` at the card level, alongside `query`, to make displayed entity names clickable. Each button opens Home Assistant's **More information** dialog for its entity; it never opens an arbitrary external URL. When `entity.name` is not selected, a selected `entity_id` column becomes the link instead. Entity metadata is included automatically, so `entity_id` need not be selected when names are shown.
+
+The option defaults to `false` and accepts only a boolean. Names and IDs remain plain text without this option. Device-query results have no entity links. Only syntactically valid entity IDs become buttons; buttons support native keyboard activation and include an accessible "More information" label.
 
 ## Device queries and history
 
