@@ -242,7 +242,7 @@ class QueryLanguageTests(unittest.TestCase):
         self.assertFalse(uses_legacy_state({'from': 'devices', 'where': {'has_entity': {'device_class': 'power'}}}))
 
     def test_device_fields_are_limited_to_device_rows(self):
-        for field in ['entity.state', 'entity.attributes.battery', 'domain', 'history.bad']:
+        for field in ['entity.state', 'entity.device_class', 'entity.attributes.battery', 'domain', 'history.bad']:
             with self.subTest(field=field), self.assertRaises(ValueError):
                 validate_query({'from': 'devices', 'where': {}, 'columns': [field]})
         for field in ['device.id', 'device.name', 'device.manufacturer', 'device.model', 'area.name', 'history.status']:

@@ -1,0 +1,16 @@
+type: custom:ha-query-card
+title: Door sensors
+group_by: area
+state_color: true
+refresh_seconds: 60
+query:
+  from: entities
+  where:
+    domain: binary_sensor
+    device_class: door
+  columns:
+    - entity.name
+    - entity.state
+  sort:
+    by: entity.name
+  limit: 100

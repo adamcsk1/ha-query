@@ -88,6 +88,7 @@ def _entity_row(hass: HomeAssistant, state, registry, devices, areas, parse_stat
         'domain': state.domain,
         'entity.name': state.name,
         'entity.state': value,
+        'entity.device_class': device_class if isinstance(device_class, str) and len(device_class) <= 64 else None,
         'entity.unit': unit,
         'entity.disabled': bool(entry.disabled_by) if entry else False,
         'entity.platform': entry.platform if entry else '',

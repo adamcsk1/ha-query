@@ -253,6 +253,29 @@ class IntegrationTests(unittest.IsolatedAsyncioTestCase):
         await self.run_query(query(where={'device_class': 'power'}))
         self.assertEqual([row['entity.state'] for row in self.connection.send_result.call_args.args[1]['rows']], [12])
 
+    async def test_device_class_metadata_is_authorized_and_independent_of_columns(self):
+        self.add_entity('binary_sensor.door', 'door', 'on')
+        self.add_entity('binary_sensor.secret', 'motion', 'off')
+        self.denied.add('binary_sensor.secret')
+        await self.run_query(query(where={'domain': 'binary_sensor'}, columns=['entity.name', 'entity.state']))
+        result = self.connection.send_result.call_args.args[1]
+        self.assertEqual(result['columns'], ['entity.name', 'entity.state'])
+        self.assertEqual(len(result['rows']), 1)
+        self.assertEqual(result['rows'][0]['entity.device_class'], 'door')
+        self.assertEqual(result['rows'][0]['domain'], 'binary_sensor')
+        self.assertNotIn('_attributes', result['rows'][0])
+        await self.run_query(query(where={'entity.device_class': 'door'}, columns=['entity.device_class']))
+        self.assertEqual(self.connection.send_result.call_args.args[1]['rows'][0]['entity.device_class'], 'door')
+
+    async def test_malformed_device_class_metadata_does_not_break_unrelated_columns(self):
+        self.add_entity('binary_sensor.door', 'door', 'off')
+        for device_class in (None, {}, 'x' * 65):
+            with self.subTest(device_class=device_class):
+                self.states['binary_sensor.door'].attributes['device_class'] = device_class
+                await self.run_query(query(where={'domain': 'binary_sensor'}, columns=['entity.state']))
+                self.connection.send_error.assert_not_called()
+                self.assertIsNone(self.connection.send_result.call_args.args[1]['rows'][0]['entity.device_class'])
+
     async def test_battery_percentages_include_unavailable_exclude_binary_and_wrong_units(self):
         for eid, value in [('sensor.full', '100'), ('sensor.empty', '0'), ('sensor.offline', 'unavailable'),
                            ('sensor.nan', 'NaN'), ('sensor.high', '101'), ('sensor.low', '-1'),

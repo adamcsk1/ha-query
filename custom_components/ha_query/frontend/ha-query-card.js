@@ -53,6 +53,9 @@ class HaQueryCard extends HTMLElement {
     if (config.group_by !== undefined && config.group_by !== 'area') {
       throw new Error('group_by must be area when specified');
     }
+    if (config.state_color !== undefined && typeof config.state_color !== 'boolean') {
+      throw new Error('state_color must be a boolean');
+    }
     const seconds = config.refresh_seconds ?? 300;
     if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds < 60 || seconds > 2147483) {
       throw new Error('refresh_seconds must be a number between 60 and 2147483');
@@ -178,6 +181,18 @@ class HaQueryCard extends HTMLElement {
     }
     return value == null ? '-' : typeof value === 'object' ? JSON.stringify(value) : String(value);
   }
+  _stateColor(row) {
+    const state = row['entity.state'];
+    if (!this._config.state_color || row.domain !== 'binary_sensor' || !['on', 'off'].includes(state)) return '';
+    const active = state === 'on' ? 'active' : 'inactive';
+    // Match HA's state_color.ts fallback order without inserting arbitrary CSS.
+    let color = `var(--state-binary_sensor-${state}-color, var(--state-binary_sensor-${active}-color, var(--state-${active}-color, var(--primary-text-color))))`;
+    const deviceClass = row['entity.device_class'];
+    if (typeof deviceClass === 'string' && /^[a-z][a-z0-9_]{0,63}$/.test(deviceClass)) {
+      color = `var(--state-binary_sensor-${deviceClass}-${state}-color, ${color})`;
+    }
+    return color;
+  }
   _renderGroup(group) {
     const section = document.createElement('section');
     section.className = 'haq-group';
@@ -213,7 +228,11 @@ class HaQueryCard extends HTMLElement {
       const element = document.createElement('div');
       element.className = 'haq-row';
       element.setAttribute('role', 'row');
-      for (const column of columns) element.append(this._cell(this._value(row, column), column, 'cell'));
+      for (const column of columns) {
+        const cell = this._cell(this._value(row, column), column, 'cell');
+        if (column === 'entity.state') cell.style.color = this._stateColor(row);
+        element.append(cell);
+      }
       grid.append(element);
     }
     return grid;

@@ -14,7 +14,7 @@ ALIASES = {'domain': 'domain', 'device_class': 'entity.attributes.device_class',
            'unit': 'entity.unit', 'name': 'entity.name', 'entity_name': 'entity.name'}
 WILDCARD_FIELDS = {'entity_id', 'entity.name'}
 BASE_FIELDS = {
-    'entity_id', 'domain', 'entity.name', 'entity.state', 'entity.unit', 'entity.disabled', 'entity.platform',
+    'entity_id', 'domain', 'entity.name', 'entity.state', 'entity.unit', 'entity.disabled', 'entity.platform', 'entity.device_class',
     'device.id', 'device.name', 'device.manufacturer', 'device.model', 'area.id', 'area.name', 'battery.level',
     'history.last_change', 'history.days_inactive', 'history.status',
 }

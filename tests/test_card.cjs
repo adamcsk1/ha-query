@@ -44,6 +44,80 @@ function descendants(node) {
   return [node, ...node.children.flatMap(descendants)];
 }
 
+test('state_color accepts only booleans without disturbing valid configuration', () => {
+  const {card, intervals} = fixture();
+  card.setConfig({...config(), state_color: true});
+  const timer = [...intervals.keys()][0];
+  for (const state_color of ['true', 'false', 0, 1, null, [], {}]) {
+    assert.throws(() => card.setConfig({...config(), state_color}), /state_color/);
+    assert.equal(card._config.state_color, true);
+    assert.equal([...intervals.keys()][0], timer);
+  }
+  card.setConfig({...config(), state_color: false});
+  assert.equal(card._config.state_color, false);
+});
+
+test('binary sensor state coloring is opt-in and uses HA theme fallback order', async () => {
+  for (const state_color of [undefined, false, true]) {
+    const {card, hass, requests} = fixture();
+    card.setConfig({...config(), state_color, group_by: 'area'});
+    card.hass = hass;
+    requests[0].resolve({columns: ['entity.name', 'entity.state'], rows: ['on', 'off'].map(state => ({
+      domain: 'binary_sensor', 'entity.device_class': 'door', 'entity.name': 'Door', 'entity.state': state,
+      'area.id': 'hall', 'area.name': 'Hall',
+    }))});
+    await tick();
+    const cells = descendants(card).filter(node => node.getAttribute('role') === 'cell');
+    assert.deepEqual(cells.map(node => node.textContent), ['Door', 'on', 'Door', 'off']);
+    assert.equal(cells[0].style.color, undefined);
+    for (const [cell, state, active] of [[cells[1], 'on', 'active'], [cells[3], 'off', 'inactive']]) {
+      assert.equal(cell.style.color, state_color
+        ? `var(--state-binary_sensor-door-${state}-color, var(--state-binary_sensor-${state}-color, var(--state-binary_sensor-${active}-color, var(--state-${active}-color, var(--primary-text-color)))))`
+        : '');
+    }
+    assert(descendants(card).filter(node => node.getAttribute('role') === 'columnheader').every(node => !node.style.color));
+  }
+});
+
+test('coloring stays neutral for nonbinary and missing states and rejects CSS injection', async () => {
+  const {card, hass, requests} = fixture();
+  card.setConfig({...config(), state_color: true});
+  card.hass = hass;
+  const rows = [
+    ...['unknown', 'unavailable', null, undefined, true, 1, 'on);color:red'].map(state => ({domain: 'binary_sensor', 'entity.state': state})),
+    {domain: 'sensor', 'entity.state': 'on'},
+    {'entity.state': 'on'},
+    ...[undefined, null, {}, 'door), red); --evil: url(x)', 'x'.repeat(65)].map(deviceClass => ({
+      domain: 'binary_sensor', 'entity.state': 'on', 'entity.device_class': deviceClass,
+    })),
+  ];
+  requests[0].resolve({columns: ['entity.state'], rows});
+  await tick();
+  const cells = descendants(card).filter(node => node.getAttribute('role') === 'cell');
+  assert(cells.slice(0, 9).every(node => node.style.color === ''));
+  assert(cells.slice(9).every(node => node.style.color ===
+    'var(--state-binary_sensor-on-color, var(--state-binary_sensor-active-color, var(--state-active-color, var(--primary-text-color))))'));
+});
+
+test('refreshing state removes active color when sensor becomes unavailable', async () => {
+  const {card, hass, requests, intervals} = fixture();
+  card.setConfig({...config(), state_color: true});
+  card.hass = hass;
+  requests[0].resolve({columns: ['entity.state', 'entity.unit'], rows: [
+    {domain: 'binary_sensor', 'entity.state': 'on', 'entity.device_class': 'motion'},
+  ]});
+  await tick();
+  assert(descendants(card).find(node => node.getAttribute('role') === 'cell').style.color.includes('motion-on'));
+  [...intervals.values()][0].callback();
+  requests[1].resolve({columns: ['entity.state', 'entity.unit'], rows: [
+    {domain: 'binary_sensor', 'entity.state': 'unavailable', 'entity.device_class': 'motion'},
+  ]});
+  await tick();
+  const cell = descendants(card).find(node => node.getAttribute('role') === 'cell');
+  assert.equal(cell.textContent, 'unavailable');
+  assert.equal(cell.style.color, '');
+});
+
 test('refresh settings are finite, bounded numbers', () => {
   for (const value of ['oops', '60', NaN, Infinity, -Infinity, 0, -1, 59, 2147484, true]) {
     const {card, intervals} = fixture();

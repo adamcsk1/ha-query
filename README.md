@@ -58,6 +58,7 @@ lovelace:
 - [Inactive battery devices](examples/inactive-battery-devices.yaml): devices whose enabled registered entities have no recorded changes for 14 days.
 - [Current power usage](examples/current-power-usage.yaml): live power readings above zero.
 - [Lights on by area](examples/lights-on-by-area.yaml): generic filter combining domain and state conditions.
+- [Door sensors by area](examples/door-sensors-by-area.yaml): binary sensor states with opt-in Home Assistant theme colors.
 - [Filtered sensors by area](examples/filtered-sensors-by-area.yaml): entity ID/name wildcards and exclusions.
 - [Unavailable power and battery sensors](examples/unavailable-power-and-battery.yaml): generic state filters that preserve `unknown` and `unavailable` readings.
 
@@ -172,7 +173,7 @@ The option defaults to `false`. Plain numeric states keep their existing represe
 
 Available fields include:
 
-- `entity_id`, `domain`, `entity.name`, `entity.state`, `entity.unit`, `entity.disabled`, `entity.platform`
+- `entity_id`, `domain`, `entity.name`, `entity.state`, `entity.unit`, `entity.device_class`, `entity.disabled`, `entity.platform`
 - `entity.attributes.<name>` with nested paths such as `entity.attributes.config.zone`
 - `device.id`, `device.name`, `device.manufacturer`, `device.model`
 - `area.id`, `area.name`
@@ -188,6 +189,14 @@ Responses are limited to 500 rows and 4 MB, including the WebSocket result envel
 Add `group_by: area` to the card configuration. Areas render as separate responsive panels; narrow cards use labeled rows without horizontal scrolling. State and unit columns display together, such as `95%`. The backend sorts and applies `limit` before grouping; `limit` defaults to 100. A warning appears when matching results are truncated.
 
 The default refresh interval is five minutes. Set `refresh_seconds` to a number from 60 through 2,147,483 to change it.
+
+### Binary sensor state colors
+
+Set `state_color: true` at the card level, alongside `query`, to color binary sensor `entity.state` cells. It defaults to `false` and accepts only a boolean. Other domains, columns, and device-query results keep their normal text color.
+
+Colors follow Home Assistant's theme fallback order: device class and state, binary sensor state, binary sensor active/inactive, then general active/inactive color. Custom themes can override these variables; for example, `state-binary_sensor-door-on-color` sets the open-door color. Unknown, unavailable, and missing states keep the normal text color.
+
+State text remains unchanged: a door sensor displays `on` for open and `off` for closed. Colors use the same query snapshot as the text and update on the card's normal refresh interval. Device class metadata is included automatically, so it does not need to be selected as a column. Missing or malformed device classes fall back to the domain colors; `entity.device_class` is null for non-text values or strings longer than 64 characters.
 
 ## Device queries and history
 
