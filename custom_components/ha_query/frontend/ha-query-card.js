@@ -42,6 +42,8 @@ const CARD_STYLES = `
     .haq-cell:first-child::before { display: none; }
   }
 `;
+const EVENT_REFRESH_MS = 250;
+const REGISTRY_EVENTS = ['entity_registry_updated', 'device_registry_updated', 'area_registry_updated'];
 const FIELD_LABELS = {
   entity_id: 'Entity ID', 'entity.name': 'Entity', 'entity.state': 'State', 'entity.unit': 'Unit',
   'device.id': 'Device ID', 'device.name': 'Device', 'device.manufacturer': 'Manufacturer', 'device.model': 'Model',
@@ -70,6 +72,9 @@ class HaQueryCard extends HTMLElement {
     this._generation = (this._generation || 0) + 1;
     this._refreshMs = seconds * 1000;
     this._lastRefresh = 0;
+    this._pendingRefresh = false;
+    this._stopSubscriptions();
+    this._stopEventTimer();
     this._rows = [];
     this._columns = [];
     this._error = '';
@@ -77,20 +82,70 @@ class HaQueryCard extends HTMLElement {
     this._stopTimer();
     this._render();
     this._startTimer();
+    this._startSubscriptions();
     this._fetch();
   }
   set hass(hass) {
+    const changed = this._hass !== hass;
     this._hass = hass;
+    if (changed) this._startSubscriptions();
     if (!this._config || this._loading) return;
     if (Date.now() - this._lastRefresh >= this._refreshMs) this._fetch();
   }
   connectedCallback() {
+    this._startSubscriptions();
     if (this._hass && this._config) this._fetch();
     this._startTimer();
   }
   disconnectedCallback() {
     this._generation = (this._generation || 0) + 1;
+    this._pendingRefresh = false;
     this._stopTimer();
+    this._stopEventTimer();
+    this._stopSubscriptions();
+  }
+  _stopEventTimer() {
+    if (this._eventTimer) clearTimeout(this._eventTimer);
+    this._eventTimer = null;
+  }
+  _queueRefresh() {
+    if (!this.isConnected || !this._config) return;
+    this._pendingRefresh = true;
+    if (this._eventTimer) return;
+    this._eventTimer = setTimeout(() => {
+      this._eventTimer = null;
+      if (!this._loading) this._pendingRefresh = false;
+      this._fetch();
+    }, EVENT_REFRESH_MS);
+  }
+  _stopSubscriptions() {
+    for (const unsubscribe of this._unsubscribes || []) unsubscribe();
+    this._unsubscribes = [];
+    this._subscriptionsHass = null;
+    this._subscriptionsStarting = false;
+    this._subscriptionsGeneration = null;
+  }
+  _startSubscriptions() {
+    if (this._subscriptionsStarting || this._subscriptionsHass === this._hass
+        || !this._hass?.subscribeMessage || !this.isConnected || !this._config) return;
+    const hass = this._hass;
+    const generation = this._generation;
+    this._subscriptionsStarting = true;
+    this._subscriptionsGeneration = generation;
+    const active = () => this._subscriptionsHass === hass && this._subscriptionsGeneration === generation
+      && this.isConnected && this._hass === hass;
+    const subscribe = (message, callback) => hass.subscribeMessage(callback, message).then(unsubscribe => {
+      if (!active()) { unsubscribe(); return; }
+      this._unsubscribes.push(unsubscribe);
+    }).catch(error => {
+      console.warn('HA Query event subscription failed; periodic refresh remains active', error);
+    });
+    subscribe({type: 'subscribe_entities'}, () => { if (active()) this._queueRefresh(); });
+    for (const event_type of REGISTRY_EVENTS) {
+      subscribe({type: 'subscribe_events', event_type}, () => { if (active()) this._queueRefresh(); });
+    }
+    this._subscriptionsHass = hass;
+    this._subscriptionsStarting = false;
   }
   _stopTimer() {
     if (this._timer) clearInterval(this._timer);
@@ -119,6 +174,7 @@ class HaQueryCard extends HTMLElement {
       this._loading = false;
       if (generation === this._generation) this._render();
       else this._fetch();
+      if (this._pendingRefresh && !this._eventTimer) this._queueRefresh();
     }
   }
   _render() {
