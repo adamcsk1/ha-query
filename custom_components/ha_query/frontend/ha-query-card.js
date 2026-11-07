@@ -64,6 +64,26 @@ class HaQueryCard extends HTMLElement {
         throw new Error(`${option} must be a boolean`);
       }
     }
+    if (config.entity_names !== undefined) {
+      const names = config.entity_names;
+      if (!names || typeof names !== 'object' || Array.isArray(names) || Object.keys(names).length > 500) {
+        throw new Error('entity_names must be a mapping of at most 500 entity IDs to labels');
+      }
+      for (const [entityId, label] of Object.entries(names)) {
+        if (entityId.length > 255 || !/^[a-z0-9_]+\.[a-z0-9_]+$/.test(entityId)
+            || /[\n\r\u2028\u2029]/.test(entityId) || typeof label !== 'string' || !label || label.length > 256) {
+          throw new Error('entity_names requires valid entity IDs and nonempty labels of at most 256 characters');
+        }
+      }
+    }
+    if (config.state_labels !== undefined) {
+      const labels = config.state_labels;
+      if (!labels || typeof labels !== 'object' || Array.isArray(labels)
+          || Object.keys(labels).some(state => !['on', 'off', 'unknown', 'unavailable'].includes(state))
+          || Object.values(labels).some(label => typeof label !== 'string' || !label || label.length > 64)) {
+        throw new Error('state_labels supports on/off/unknown/unavailable with nonempty labels of at most 64 characters');
+      }
+    }
     const seconds = config.refresh_seconds ?? 300;
     if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds < 60 || seconds > 2147483) {
       throw new Error('refresh_seconds must be a number between 60 and 2147483');
@@ -236,6 +256,13 @@ class HaQueryCard extends HTMLElement {
   }
   _value(row, column) {
     const value = row[column];
+    if (column === 'entity.name' && Object.hasOwn(this._config.entity_names || {}, row.entity_id)) {
+      return this._config.entity_names[row.entity_id];
+    }
+    if (column === 'entity.state' && row.domain === 'binary_sensor'
+        && Object.hasOwn(this._config.state_labels || {}, value)) {
+      return this._config.state_labels[value];
+    }
     if (column === 'entity.state' && this._columns.includes('entity.unit')) {
       if (value == null) return '-';
       const unit = row['entity.unit'] || '';
@@ -322,7 +349,9 @@ class HaQueryCard extends HTMLElement {
     button.type = 'button';
     button.textContent = value;
     button.className = 'haq-entity-link';
-    button.setAttribute('aria-label', `More information: ${row['entity.name'] || row.entity_id}`);
+    const name = Object.hasOwn(this._config.entity_names || {}, row.entity_id)
+      ? this._config.entity_names[row.entity_id] : row['entity.name'];
+    button.setAttribute('aria-label', `More information: ${name || row.entity_id}`);
     button.title = row.entity_id;
     const openEntity = () => this.dispatchEvent(new CustomEvent('hass-more-info', {
       bubbles: true, composed: true, detail: {entityId: row.entity_id},

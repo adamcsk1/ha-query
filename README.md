@@ -200,7 +200,25 @@ Set `state_color: true` at the card level, alongside `query`, to color binary se
 
 Colors follow Home Assistant's theme fallback order: device class and state, binary sensor state, binary sensor active/inactive, then general active/inactive color. Custom themes can override these variables; for example, `state-binary_sensor-door-on-color` sets the open-door color. Unknown, unavailable, and missing states keep the normal text color.
 
-State text remains unchanged: a door sensor displays `on` for open and `off` for closed. Colors use the same query snapshot as the text and update whenever the card refreshes. Device class metadata is included automatically, so it does not need to be selected as a column. Missing or malformed device classes fall back to the domain colors; `entity.device_class` is null for non-text values or strings longer than 64 characters.
+By default, a door sensor displays `on` for open and `off` for closed. Colors use the same query snapshot as the text and update whenever the card refreshes. Device class metadata is included automatically, so it does not need to be selected as a column. Missing or malformed device classes fall back to the domain colors; `entity.device_class` is null for non-text values or strings longer than 64 characters.
+
+### Custom names and binary sensor labels
+
+Use optional card-level mappings to customize displayed text without changing queries or entity metadata. `entity_names` maps up to 500 exact entity IDs to nonempty labels of at most 256 characters. Only a selected `entity.name` cell changes; device names, grouping, sorting, and filtering are unaffected.
+
+`state_labels` maps any of `on`, `off`, `unknown`, and `unavailable` to nonempty labels of at most 64 characters. Quote the `on` and `off` keys in YAML so they are not parsed as booleans. It applies only to binary sensor state cells. Omitted states keep their raw text. Colors still use the original `on`/`off` state, and links still target the original authorized entity ID. Custom link names are also used in the accessible More Information label.
+
+```yaml
+entity_names:
+  binary_sensor.front_door: Front entrance
+state_labels:
+  "on": Open
+  "off": Closed
+  unknown: Unknown
+  unavailable: Offline
+```
+
+Both options are disabled when omitted and accept mappings, not arbitrary templates or HTML. All displayed values remain plain text.
 
 ### Entity links
 

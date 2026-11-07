@@ -17,3 +17,5 @@ class ExampleTests(unittest.TestCase):
                 config = yaml.load_yaml(str(path))
                 self.assertEqual(config['type'], 'custom:ha-query-card')
                 validate_query(QUERY_SCHEMA(config['query']))
+                if 'state_labels' in config:
+                    self.assertTrue(set(config['state_labels']) <= {'on', 'off', 'unknown', 'unavailable'})

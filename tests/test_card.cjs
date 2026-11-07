@@ -282,6 +282,77 @@ test('refresh replaces links and disables them after entity_links becomes false'
   assert.equal(descendants(card).filter(node => node.tag === 'button').length, 0);
 });
 
+test('display mappings customize binary states and exact entity names only', async () => {
+  const {card, hass, requests} = fixture();
+  card.setConfig({...config(),
+    entity_names: {
+      'binary_sensor.front_door': 'Front entrance',
+      'binary_sensor.other': 'Other',
+      '__proto__': 'Unsafe inherited value',
+    },
+    state_labels: {on: 'Open', off: 'Closed', unknown: 'No reading', unavailable: 'Offline'},
+  });
+  card.hass = hass;
+  requests[0].resolve({columns: ['entity.name', 'entity.state'], rows: [
+    {entity_id: 'binary_sensor.front_door', domain: 'binary_sensor', 'entity.name': 'Old name', 'entity.state': 'on'},
+    {entity_id: 'binary_sensor.back_door', domain: 'binary_sensor', 'entity.name': 'Back door', 'entity.state': 'off'},
+    {entity_id: 'binary_sensor.unknown', domain: 'binary_sensor', 'entity.name': 'Unknown', 'entity.state': 'unknown'},
+    {entity_id: 'binary_sensor.offline', domain: 'binary_sensor', 'entity.name': 'Offline', 'entity.state': 'unavailable'},
+    {entity_id: 'binary_sensor.custom', domain: 'binary_sensor', 'entity.name': 'Custom', 'entity.state': 'other'},
+    {entity_id: 'sensor.switch', domain: 'sensor', 'entity.name': 'Not binary', 'entity.state': 'on'},
+    {entity_id: 'binary_sensor.null', domain: 'binary_sensor', 'entity.name': 'Null', 'entity.state': null},
+  ]});
+  await tick();
+  assert.deepEqual(descendants(card).filter(node => node.getAttribute('role') === 'cell').map(node => node.textContent), [
+    'Front entrance', 'Open', 'Back door', 'Closed', 'Unknown', 'No reading', 'Offline', 'Offline',
+    'Custom', 'other', 'Not binary', 'on', 'Null', '-',
+  ]);
+});
+
+test('display mappings preserve state colors, link targets, and safe accessible text', async () => {
+  const {card, hass, requests} = fixture();
+  const entityId = 'binary_sensor.front_door';
+  card.setConfig({...config(), entity_links: true, state_color: true,
+    entity_names: {[entityId]: '<b>Front entrance</b>'}, state_labels: {on: '<i>Open</i>'}});
+  card.hass = hass;
+  requests[0].resolve({columns: ['entity.name', 'entity.state'], rows: [{
+    entity_id: entityId, domain: 'binary_sensor', 'entity.device_class': 'door', 'entity.name': 'Original', 'entity.state': 'on',
+  }]});
+  await tick();
+  const cells = descendants(card).filter(node => node.getAttribute('role') === 'cell');
+  const link = cells[0].children[0];
+  assert.equal(link.textContent, '<b>Front entrance</b>');
+  assert.equal(link.getAttribute('aria-label'), 'More information: <b>Front entrance</b>');
+  assert.equal(cells[1].textContent, '<i>Open</i>');
+  assert(cells[1].style.color.includes('door-on'));
+  assert.equal(descendants(card).filter(node => ['b', 'i'].includes(node.tag)).length, 0);
+  link.listeners.click[0]({});
+  assert.equal(card.events[0].detail.entityId, entityId);
+});
+
+test('display mappings validate shape, keys, values, and bounds atomically', () => {
+  const invalid = [
+    {entity_names: null}, {entity_names: []}, {entity_names: 'name'}, {entity_names: {sensor: 'Bad ID'}},
+    {entity_names: {'sensor.valid\n': 'Newline'}}, {entity_names: {'sensor.valid': ''}},
+    {entity_names: {'sensor.valid': 1}}, {entity_names: {'sensor.valid': 'x'.repeat(257)}},
+    {state_labels: null}, {state_labels: []}, {state_labels: 'Open'}, {state_labels: {open: 'Open'}},
+    {state_labels: {on: ''}}, {state_labels: {on: 1}}, {state_labels: {on: 'x'.repeat(65)}},
+  ];
+  for (const options of invalid) {
+    const {card, intervals} = fixture();
+    card.setConfig({...config(), entity_names: {'sensor.valid': 'Valid'}, state_labels: {on: 'Open'}});
+    const timer = [...intervals.keys()][0];
+    assert.throws(() => card.setConfig({...config(), ...options}));
+    assert.equal(card._config.entity_names['sensor.valid'], 'Valid');
+    assert.equal(card._config.state_labels.on, 'Open');
+    assert.equal([...intervals.keys()][0], timer);
+  }
+  const {card} = fixture();
+  const manyNames = Object.fromEntries(Array.from({length: 501}, (_, i) => [`sensor.e${i}`, `Name ${i}`]));
+  assert.throws(() => card.setConfig({...config(), entity_names: manyNames}), /500/);
+  card.setConfig({...config(), entity_names: {}, state_labels: {}});
+});
+
 test('entity queries subscribe to state and registry changes once connected', async () => {
   const {card, hass, requests, subscriptions} = fixture();
   card.setConfig(config());

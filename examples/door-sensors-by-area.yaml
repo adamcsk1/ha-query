@@ -3,6 +3,13 @@ title: Door sensors
 group_by: area
 state_color: true
 entity_links: true
+entity_names:
+  binary_sensor.front_door: Front entrance # Replace with your exact entity IDs.
+state_labels:
+  "on": Open
+  "off": Closed
+  unknown: Unknown
+  unavailable: Offline
 refresh_seconds: 60
 query:
   from: entities
