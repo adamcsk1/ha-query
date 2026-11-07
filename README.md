@@ -18,6 +18,7 @@ Query any loaded entity domain, compare state and nested attributes, combine con
 - Boolean `all`, `any`, and `not` groups
 - Numeric, text, membership, containment, and existence operators
 - Multi-value device-class filters, entity ID/name wildcards, and exclusions
+- Optional parsing of numeric states with embedded units
 - Nested state attributes, registry, device, and area fields
 - Generic device selection through matching entities
 - Device inactivity across all enabled entities or only matching entities
@@ -148,6 +149,23 @@ where:
 ```
 
 The original power and battery shorthand retains its sensor-domain, unit, and missing-reading behavior. Lists containing those classes apply the same requirements per class. Use explicit `entity.attributes.device_class` conditions for unrestricted generic battery queries.
+
+### Embedded state units
+
+Set `parse_state: true` beside `from` and `where` when an integration stores a number and its unit together in the state:
+
+```yaml
+query:
+  from: entities
+  parse_state: true
+  where:
+    state:
+      gte: 0
+```
+
+States such as `"0W"`, `"0 W"`, `"-2.5 kW"`, `"21.5°C"`, and `"98.6%"` become numeric `entity.state` values with the suffix available as `entity.unit`. An existing `unit_of_measurement` attribute takes precedence over the parsed suffix. Parsing supports optional whitespace and decimal or scientific notation, but not decimal commas or unit conversion.
+
+The option defaults to `false`. Plain numeric states keep their existing representation, while unknown, unavailable, nonfinite, and malformed states remain unchanged and do not match numeric comparisons. A parsed zero still does not match `state: {gt: 0}`; use `gte: 0` or remove the threshold when zero readings should appear. Device `has_entity` filters support the same option.
 
 ### Fields and results
 

@@ -4,6 +4,7 @@ group_by: area
 refresh_seconds: 60
 query:
   from: entities
+  parse_state: true
   where:
     device_class: power
     state:
