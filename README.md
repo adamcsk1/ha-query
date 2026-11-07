@@ -58,7 +58,7 @@ lovelace:
 - [Inactive battery devices](examples/inactive-battery-devices.yaml): devices whose enabled registered entities have no recorded changes for 14 days.
 - [Current power usage](examples/current-power-usage.yaml): live power readings above zero.
 - [Lights on by area](examples/lights-on-by-area.yaml): generic filter combining domain and state conditions.
-- [Door sensors by area](examples/door-sensors-by-area.yaml): binary sensor states with opt-in Home Assistant theme colors.
+- [Door sensors by area](examples/door-sensors-by-area.yaml): binary sensor states with opt-in Home Assistant theme colors and entity links.
 - [Filtered sensors by area](examples/filtered-sensors-by-area.yaml): entity ID/name wildcards and exclusions.
 - [Unavailable power and battery sensors](examples/unavailable-power-and-battery.yaml): generic state filters that preserve `unknown` and `unavailable` readings.
 
@@ -202,9 +202,11 @@ State text remains unchanged: a door sensor displays `on` for open and `off` for
 
 ### Entity links
 
-Set `entity_links: true` at the card level, alongside `query`, to make displayed entity names clickable. Each button opens Home Assistant's **More information** dialog for its entity; it never opens an arbitrary external URL. When `entity.name` is not selected, a selected `entity_id` column becomes the link instead. Entity metadata is included automatically, so `entity_id` need not be selected when names are shown.
+Set `entity_links: true` at the card level, alongside `query`, to make one displayed entity field clickable per row. Link priority is `entity.name`, then `device.name`, then `entity_id`. Only the highest-priority selected field becomes a button; the other fields remain plain text. Device names therefore work without adding an extra name or ID UI column.
 
-The option defaults to `false` and accepts only a boolean. Names and IDs remain plain text without this option. Device-query results have no entity links. Only syntactically valid entity IDs become buttons; buttons support native keyboard activation and include an accessible "More information" label.
+Each button opens Home Assistant's **More information** dialog for its entity; it never opens an arbitrary external URL. Authorized entity metadata is included automatically, so `entity_id` need not be selected when names are shown. Place `entity_links` beside `type`, not inside `query`; then restart HA and hard-refresh the browser so the current card script is loaded.
+
+The option defaults to `false` and accepts only a boolean. Device-query results have no entity links. Only syntactically valid entity IDs become buttons; buttons support native keyboard activation and include an accessible "More information" label.
 
 ## Device queries and history
 

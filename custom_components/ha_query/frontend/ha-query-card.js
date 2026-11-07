@@ -255,8 +255,8 @@ class HaQueryCard extends HTMLElement {
     return cell;
   }
   _isEntityLink(row, column) {
-    return this._config.entity_links
-      && (column === 'entity.name' || (column === 'entity_id' && !this._columns.includes('entity.name')))
+    const linkColumn = ['entity.name', 'device.name', 'entity_id'].find(field => this._columns.includes(field));
+    return this._config.entity_links && column === linkColumn
       && typeof row.entity_id === 'string' && row.entity_id.length <= 255
       && /^[a-z0-9_]+\.[a-z0-9_]+$/.test(row.entity_id)
       && !/[\n\r\u2028\u2029]/.test(row.entity_id);

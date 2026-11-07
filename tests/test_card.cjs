@@ -200,6 +200,29 @@ test('entity links open HA more-info with keyboard access and no URLs', async ()
   }
 });
 
+test('entity link priority is name, then device, then ID with exactly one link', async () => {
+  for (const [columns, expectedColumn, expectedText] of [
+    [['entity_id', 'device.name', 'entity.name', 'entity.state'], 'Entity', 'Entity name'],
+    [['entity_id', 'device.name', 'entity.state'], 'Device', 'Device name'],
+    [['entity_id', 'entity.state'], 'Entity ID', 'binary_sensor.front_door'],
+    [['device.name', 'entity.state', 'entity.unit'], 'Device', 'Device name'],
+  ]) {
+    const {card, hass, requests} = fixture();
+    card.setConfig({...config(), entity_links: true});
+    card.hass = hass;
+    requests[0].resolve({columns, rows: [{
+      entity_id: 'binary_sensor.front_door', 'entity.name': 'Entity name', 'device.name': 'Device name', 'entity.state': 'off', 'entity.unit': '',
+    }]});
+    await tick();
+    const cells = descendants(card).filter(node => node.getAttribute('role') === 'cell');
+    const linkedCells = cells.filter(cell => cell.children.some(child => child.tag === 'button'));
+    assert.equal(linkedCells.length, 1);
+    assert.equal(linkedCells[0].dataset.label, expectedColumn);
+    assert.equal(linkedCells[0].children[0].textContent, expectedText);
+    assert(cells.every(cell => cell.children.filter(child => child.tag === 'button').length <= 1));
+  }
+});
+
 test('entity ID links are fallback only without entity name column', async () => {
   const {card, hass, requests, intervals} = fixture();
   card.setConfig({...config(), entity_links: true});
