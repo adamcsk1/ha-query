@@ -17,7 +17,26 @@ from homeassistant.core import HomeAssistant
 from homeassistant.components.lovelace.resources import ResourceStorageCollection
 
 from custom_components import ha_query as integration
+from custom_components.ha_query import query_execution as execution
 from custom_components.ha_query.config_flow import HaQueryConfigFlow
+from custom_components.ha_query.query_language import validate_query
+
+
+def validate_where(q):
+    _, history = validate_query(q)
+    return history['days'] if history else None
+
+
+def entities(hass, q, user):
+    expression, _ = validate_query(q)
+    return execution._entities(hass, q, user, expression)
+
+
+async def battery(hass, days, user):
+    q = query('devices')
+    q['where']['history']['no_changes_for'] = f'{days}d'
+    expression, history = validate_query(q)
+    return await execution._devices(hass, q, user, expression, history)
 
 
 def query(source='entities', **changes):
@@ -30,17 +49,17 @@ def query(source='entities', **changes):
 
 class ValidationTests(unittest.TestCase):
     def test_supported_shapes_and_defaults(self):
-        self.assertIsNone(integration._validate_where(query()))
-        self.assertEqual(integration._validate_where(query('devices')), 14)
+        self.assertIsNone(validate_where(query()))
+        self.assertEqual(validate_where(query('devices')), 14)
         self.assertEqual(query()['limit'], 100)
         self.assertFalse(query()['parse_state'])
 
     def test_nonfinite_and_boolean_thresholds_rejected(self):
         for threshold in ['NaN', 'inf', '-inf', True, False, None, [], {}, 10**400]:
             with self.subTest(threshold=repr(threshold)), self.assertRaises(ValueError):
-                integration._validate_where(query(where={'device_class': 'power', 'state': {'gt': threshold}}))
+                validate_where(query(where={'device_class': 'power', 'state': {'gt': threshold}}))
         for threshold in [-1, 0, 0.5, '2']:
-            self.assertIsNone(integration._validate_where(query(where={'device_class': 'power', 'state': {'gt': threshold}})))
+            self.assertIsNone(validate_where(query(where={'device_class': 'power', 'state': {'gt': threshold}})))
 
     def test_columns_and_sort_are_shape_specific(self):
         for changes in [
@@ -49,23 +68,23 @@ class ValidationTests(unittest.TestCase):
             {'sort': {'by': 'typo'}}, {'sort': {'by': ''}},
         ]:
             with self.subTest(changes=changes), self.assertRaises(ValueError):
-                integration._validate_where(query(**changes))
-        self.assertIsNone(integration._validate_where(query(columns=['entity.name'], sort={'by': 'entity.state'})))
+                validate_where(query(**changes))
+        self.assertIsNone(validate_where(query(columns=['entity.name'], sort={'by': 'entity.state'})))
 
     def test_invalid_filters_and_durations(self):
         for where in [{'device_class': {'bad': 'energy'}}, {'device_class': 'power', 'extra': 1},
                       {'device_class': 'power', 'state': {'lt': 1, 'gt': 0}}]:
             with self.subTest(where=where), self.assertRaises(ValueError):
-                integration._validate_where(query(where=where))
+                validate_where(query(where=where))
         for duration in ['0d', '366d', '-1d', '1h', '1.5d', None, {}]:
             q = query('devices')
             q['where']['history']['no_changes_for'] = duration
             with self.subTest(duration=duration), self.assertRaises(ValueError):
-                integration._validate_where(q)
+                validate_where(q)
         for duration in ['1d', '365d']:
             q = query('devices')
             q['where']['history']['no_changes_for'] = duration
-            self.assertEqual(integration._validate_where(q), int(duration[:-1]))
+            self.assertEqual(validate_where(q), int(duration[:-1]))
 
     def test_schema_rejects_invalid_envelope(self):
         for changes in [{'limit': 0}, {'limit': 501}, {'extra': True}, {'sort': {'extra': True}}, {'parse_state': []}]:
@@ -91,9 +110,9 @@ class HomeAssistantContractTests(unittest.IsolatedAsyncioTestCase):
     async def test_real_registration_state_and_task_scheduling(self):
         self.hass.http = NS(async_register_static_paths=AsyncMock())
         self.hass.config_entries = NS(async_wait_initialized=AsyncMock())
-        integration.dr.async_setup(self.hass)
-        await integration.dr.async_load(self.hass, load_empty=True)
-        await integration.er.async_load(self.hass, load_empty=True)
+        execution.dr.async_setup(self.hass)
+        await execution.dr.async_load(self.hass, load_empty=True)
+        await execution.er.async_load(self.hass, load_empty=True)
         await integration.async_setup(self.hass, {})
         handler, schema = self.hass.data['websocket_api']['ha_query/run']
         self.hass.data[integration.DOMAIN]['active'] = object()
@@ -125,6 +144,19 @@ class HomeAssistantContractTests(unittest.IsolatedAsyncioTestCase):
                 load.assert_awaited_once()
                 self.assertEqual(resources.async_items(), [created])
 
+    async def test_real_recorder_health_contract(self):
+        from homeassistant.components.recorder.core import Recorder
+
+        self.hass.data['recorder'] = NS(db_connected=self.hass.loop.create_future())
+        instance = Recorder(self.hass, True, True, 10, 5, 'sqlite://', 1, 1, None, set())
+        self.assertFalse(instance.is_running)
+        self.assertFalse(instance.recording)
+        instance.is_running = True
+        instance._event_listener = lambda: None
+        self.assertTrue(instance.is_running and instance.recording)
+        instance._event_listener = None
+        self.assertFalse(instance.recording)
+
 
 class IntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
@@ -154,10 +186,11 @@ class IntegrationTests(unittest.IsolatedAsyncioTestCase):
             return future
 
         self.hass.async_add_executor_job = Mock(side_effect=executor)
-        self.enterContext(patch.object(integration.er, 'async_get', return_value=NS(entities=self.entities, async_get=self.entities.get)))
-        self.enterContext(patch.object(integration.dr, 'async_get', return_value=NS(async_get=lambda device_id, **kwargs: self.devices.get(device_id))))
-        self.enterContext(patch.object(integration.ar, 'async_get', return_value=NS(async_get_area=self.areas.get)))
-        self.enterContext(patch.object(recorder, 'get_instance', return_value=NS(db_url='sqlite:////config/history.db')))
+        self.enterContext(patch.object(execution.er, 'async_get', return_value=NS(entities=self.entities, async_get=self.entities.get)))
+        self.enterContext(patch.object(execution.dr, 'async_get', return_value=NS(async_get=lambda device_id, **kwargs: self.devices.get(device_id))))
+        self.enterContext(patch.object(execution.ar, 'async_get', return_value=NS(async_get_area=self.areas.get)))
+        self.recorder = NS(db_url='sqlite:////config/history.db', recording=True, is_running=True)
+        self.enterContext(patch.object(recorder, 'get_instance', return_value=self.recorder))
         self.enterContext(patch.object(recorder, 'is_entity_recorded', side_effect=lambda hass, eid: eid not in self.excluded))
         register = self.enterContext(patch.object(websocket_api, 'async_register_command'))
         await integration.async_setup(self.hass, {})
@@ -167,6 +200,7 @@ class IntegrationTests(unittest.IsolatedAsyncioTestCase):
     def add_entity(self, eid, device_class, value='50', device='dev', disabled=None, name=None):
         self.entities[eid] = NS(entity_id=eid, device_id=device, disabled_by=disabled, area_id=None, platform='test')
         self.states[eid] = NS(entity_id=eid, domain=eid.split('.')[0], name=name or eid, state=value,
+                              last_updated=datetime.fromtimestamp(self.old, timezone.utc),
                               attributes={'device_class': device_class, 'unit_of_measurement': '%' if device_class == 'battery' else 'W'})
         self.devices[device] = NS(id=device, name='Device', name_by_user=None, area_id=None, manufacturer='Test', model='Model')
 
@@ -196,7 +230,28 @@ class IntegrationTests(unittest.IsolatedAsyncioTestCase):
         await self.run_query(query(sort={'by': 'entity.state', 'descending': True}, limit=1))
         rows = self.connection.send_result.call_args.args[1]['rows']
         self.assertEqual([row['entity_id'] for row in rows], ['sensor.big'])
-        self.assertEqual(len(integration._entities(self.hass, query(), self.user)), 2)
+        self.assertEqual(len(entities(self.hass, query(), self.user)), 2)
+
+    async def test_websocket_compiles_query_once(self):
+        self.battery_fixture()
+        for q in (query(), query('devices')):
+            with self.subTest(source=q['from']), patch.object(integration, 'validate_query', wraps=validate_query) as validate:
+                await self.run_query(q)
+                validate.assert_called_once()
+                self.connection.send_error.assert_not_called()
+
+    async def test_generic_power_and_battery_states_remain_raw(self):
+        self.add_entity('sensor.power', 'power', 'unknown')
+        self.add_entity('sensor.battery', 'battery', '101')
+        self.add_entity('sensor.numeric', 'power', '12')
+        for where in ({'domain': 'sensor'}, {'all': [{'device_class': ['power', 'battery']}]},
+                      {'entity.state': {'in': ['unknown', '101', '12']}}):
+            with self.subTest(where=where):
+                await self.run_query(query(where=where))
+                self.assertEqual([row['entity.state'] for row in self.connection.send_result.call_args.args[1]['rows']],
+                                 ['unknown', '101', '12'])
+        await self.run_query(query(where={'device_class': 'power'}))
+        self.assertEqual([row['entity.state'] for row in self.connection.send_result.call_args.args[1]['rows']], [12])
 
     async def test_battery_percentages_include_unavailable_exclude_binary_and_wrong_units(self):
         for eid, value in [('sensor.full', '100'), ('sensor.empty', '0'), ('sensor.offline', 'unavailable'),
@@ -316,17 +371,17 @@ class IntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def test_entity_area_override_device_fallback_and_unassigned(self):
         self.add_entity('sensor.power', 'power')
         self.devices['dev'].area_id = 'kitchen'
-        row = integration._entities(self.hass, query(), self.user)[0]
+        row = entities(self.hass, query(), self.user)[0]
         self.assertEqual(row['area.name'], 'Kitchen')
         self.entities['sensor.power'].area_id = 'office'
-        row = integration._entities(self.hass, query(), self.user)[0]
+        row = entities(self.hass, query(), self.user)[0]
         self.assertEqual(row['area.name'], 'Office')
         self.entities['sensor.power'].device_id = None
-        self.assertEqual(integration._entities(self.hass, query(), self.user)[0]['area.id'], 'office')
+        self.assertEqual(entities(self.hass, query(), self.user)[0]['area.id'], 'office')
         self.entities['sensor.power'].area_id = 'deleted'
-        self.assertIsNone(integration._entities(self.hass, query(), self.user)[0]['area.id'])
+        self.assertIsNone(entities(self.hass, query(), self.user)[0]['area.id'])
         del self.entities['sensor.power']
-        self.assertEqual(integration._entities(self.hass, query(), self.user)[0]['area.name'], 'Unassigned')
+        self.assertEqual(entities(self.hass, query(), self.user)[0]['area.name'], 'Unassigned')
 
     async def test_default_fourteen_days_override_and_device_area(self):
         self.battery_fixture()
@@ -345,8 +400,8 @@ class IntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def test_child_device_inherits_parent_area(self):
         self.add_entity('sensor.child', 'battery', device='child')
         self.devices['parent'] = NS(area_id='kitchen')
-        self.devices['child'] = integration.dr.ChildDeviceEntry(config_entry_id='test', parent_device_id='parent')
-        rows = integration._entities(self.hass, query(where={'device_class': 'battery'}), self.user)
+        self.devices['child'] = execution.dr.ChildDeviceEntry(config_entry_id='test', parent_device_id='parent')
+        rows = entities(self.hass, query(where={'device_class': 'battery'}), self.user)
         self.assertEqual(rows[0]['area.id'], 'kitchen')
 
     async def test_device_battery_level_skips_binary_and_invalid_sensors(self):
@@ -354,7 +409,7 @@ class IntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.add_entity('sensor.invalid', 'battery', '101')
         self.add_entity('sensor.actual', 'battery', '35')
         self.updates = {eid: self.old for eid in self.entities}
-        rows, _ = await integration._battery(self.hass, 14, self.user)
+        rows, _ = await battery(self.hass, 14, self.user)
         self.assertEqual(rows[0]['battery.level'], 35)
 
     async def test_truncation_warning_counts_only_authorized_rows(self):
@@ -371,7 +426,7 @@ class IntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def test_battery_missing_history_is_not_inactive(self):
         self.battery_fixture()
         del self.updates['sensor.other']
-        rows, warnings = await integration._battery(self.hass, 30, self.user)
+        rows, warnings = await battery(self.hass, 30, self.user)
         self.assertEqual(rows, [])
         self.assertTrue(any('missing entity history' in warning for warning in warnings))
 
@@ -379,42 +434,42 @@ class IntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.battery_fixture()
         self.updates = {}
         self.oldest = None
-        rows, warnings = await integration._battery(self.hass, 30, self.user)
+        rows, warnings = await battery(self.hass, 30, self.user)
         self.assertEqual(rows, [])
         self.assertTrue(any('lookback' in warning for warning in warnings))
 
     async def test_battery_complete_history_and_recent_change(self):
         self.battery_fixture()
-        rows, warnings = await integration._battery(self.hass, 30, self.user)
+        rows, warnings = await battery(self.hass, 30, self.user)
         self.assertEqual(rows[0]['history.status'], 'inactive')
         self.assertEqual(warnings, [])
         self.updates['sensor.other'] = self.now
-        rows, _ = await integration._battery(self.hass, 30, self.user)
+        rows, _ = await battery(self.hass, 30, self.user)
         self.assertEqual(rows, [])
 
     async def test_battery_nonfinite_level_is_null(self):
         self.battery_fixture()
         self.states['sensor.battery'].state = 'NaN'
-        rows, _ = await integration._battery(self.hass, 30, self.user)
+        rows, _ = await battery(self.hass, 30, self.user)
         self.assertIsNone(rows[0]['battery.level'])
 
     async def test_disabled_entities_are_not_required(self):
         self.battery_fixture()
         self.entities['sensor.other'].disabled_by = 'user'
         del self.updates['sensor.other']
-        rows, _ = await integration._battery(self.hass, 30, self.user)
+        rows, _ = await battery(self.hass, 30, self.user)
         self.assertEqual(len(rows), 1)
 
     async def test_denied_device_never_reaches_database(self):
         self.battery_fixture()
         self.denied.add('sensor.other')
-        self.assertEqual(await integration._battery(self.hass, 30, self.user), ([], []))
+        self.assertEqual(await battery(self.hass, 30, self.user), ([], []))
         self.hass.async_add_executor_job.assert_not_called()
 
     async def test_excluded_entity_omits_device_even_with_old_rows(self):
         self.battery_fixture()
         self.excluded.add('sensor.other')
-        rows, warnings = await integration._battery(self.hass, 30, self.user)
+        rows, warnings = await battery(self.hass, 30, self.user)
         self.assertEqual(rows, [])
         self.assertTrue(warnings)
         self.hass.async_add_executor_job.assert_not_called()
@@ -428,7 +483,7 @@ class IntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def test_permissions_rechecked_after_database_read(self):
         self.battery_fixture()
         future = self.pending_executor()
-        task = asyncio.create_task(integration._battery(self.hass, 30, self.user))
+        task = asyncio.create_task(battery(self.hass, 30, self.user))
         await asyncio.sleep(0)
         self.denied.add('sensor.other')
         future.set_result((self.updates, self.old))
@@ -438,7 +493,7 @@ class IntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def test_recorder_exclusions_rechecked_after_database_read(self):
         self.battery_fixture()
         future = self.pending_executor()
-        task = asyncio.create_task(integration._battery(self.hass, 30, self.user))
+        task = asyncio.create_task(battery(self.hass, 30, self.user))
         await asyncio.sleep(0)
         self.excluded.add('sensor.other')
         future.set_result((self.updates, self.old))
@@ -446,24 +501,94 @@ class IntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rows, [])
         self.assertTrue(warnings)
 
+    async def test_unhealthy_recorder_never_reports_inactive(self):
+        self.battery_fixture()
+        for field in ('recording', 'is_running'):
+            with self.subTest(field=field):
+                setattr(self.recorder, field, False)
+                rows, warnings = await battery(self.hass, 30, self.user)
+                self.assertEqual(rows, [])
+                self.assertTrue(any('history is incomplete' in warning for warning in warnings))
+                self.hass.async_add_executor_job.assert_not_called()
+                setattr(self.recorder, field, True)
+
+    async def test_recorder_health_rechecked_after_database_read(self):
+        self.battery_fixture()
+        for field in ('recording', 'is_running'):
+            with self.subTest(field=field):
+                future = self.pending_executor()
+                task = asyncio.create_task(battery(self.hass, 30, self.user))
+                await asyncio.sleep(0)
+                setattr(self.recorder, field, False)
+                future.set_result((self.updates, self.old))
+                rows, warnings = await task
+                self.assertEqual(rows, [])
+                self.assertTrue(any('history is incomplete' in warning for warning in warnings))
+                setattr(self.recorder, field, True)
+
+    async def test_live_updates_override_stale_recorder_rows(self):
+        self.battery_fixture()
+        self.states['sensor.other'].last_updated = datetime.now(timezone.utc)
+        rows, _ = await battery(self.hass, 30, self.user)
+        self.assertEqual(rows, [])
+        q = query('devices')
+        q['where']['history']['scope'] = 'matching_entities'
+        await self.run_query(q)
+        self.assertEqual(len(self.connection.send_result.call_args.args[1]['rows']), 1)
+
+    async def test_live_update_during_database_read_omits_device(self):
+        self.battery_fixture()
+        future = self.pending_executor()
+        task = asyncio.create_task(battery(self.hass, 30, self.user))
+        await asyncio.sleep(0)
+        self.states['sensor.battery'].last_updated = datetime.now(timezone.utc)
+        future.set_result((self.updates, self.old))
+        rows, _ = await task
+        self.assertEqual(rows, [])
+
+    async def test_registry_membership_rechecked_after_database_read(self):
+        for change in ('removed', 'moved', 'added', 'disabled', 'enabled'):
+            with self.subTest(change=change):
+                self.entities.clear()
+                self.battery_fixture()
+                if change == 'enabled':
+                    self.add_entity('sensor.extra', 'temperature', disabled='user')
+                future = self.pending_executor()
+                task = asyncio.create_task(battery(self.hass, 30, self.user))
+                await asyncio.sleep(0)
+                if change == 'removed':
+                    del self.entities['sensor.other']
+                elif change == 'moved':
+                    self.entities['sensor.other'].device_id = 'other'
+                elif change == 'added':
+                    self.add_entity('sensor.extra', 'temperature')
+                elif change == 'disabled':
+                    self.entities['sensor.other'].disabled_by = 'user'
+                else:
+                    self.entities['sensor.extra'].disabled_by = None
+                future.set_result((self.updates, self.old))
+                rows, warnings = await task
+                self.assertEqual(rows, [])
+                self.assertTrue(any('history is incomplete' in warning for warning in warnings))
+
     async def test_concurrent_and_cancelled_requests_keep_executor_bounded(self):
         self.battery_fixture()
         future = self.pending_executor()
-        task = asyncio.create_task(integration._battery(self.hass, 30, self.user))
+        task = asyncio.create_task(battery(self.hass, 30, self.user))
         await asyncio.sleep(0)
         with self.assertRaisesRegex(ValueError, 'already running'):
-            await integration._battery(self.hass, 30, self.user)
+            await battery(self.hass, 30, self.user)
         task.cancel()
         with self.assertRaises(asyncio.CancelledError):
             await task
         self.assertFalse(future.cancelled())
         with self.assertRaisesRegex(ValueError, 'already running'):
-            await integration._battery(self.hass, 30, self.user)
+            await battery(self.hass, 30, self.user)
         self.hass.async_add_executor_job.assert_called_once()
         future.set_result((self.updates, self.old))
         await asyncio.sleep(0)
         self.assertIsNone(self.hass.data[integration.DOMAIN]['history_job'])
-        rows, _ = await integration._battery(self.hass, 30, self.user)
+        rows, _ = await battery(self.hass, 30, self.user)
         self.assertEqual(len(rows), 1)
 
     async def test_database_error_releases_slot_and_returns_error(self):
@@ -499,9 +624,9 @@ class IntegrationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_entity_limit_is_enforced_before_io(self):
         self.battery_fixture()
-        with patch.object(integration, '_device_entities', return_value={'dev': [f'sensor.e{i}' for i in range(10001)]}):
+        with patch.object(execution, '_device_entities', return_value={'dev': [f'sensor.e{i}' for i in range(10001)]}):
             with self.assertRaisesRegex(ValueError, '10,000'):
-                await integration._battery(self.hass, 30, self.user)
+                await battery(self.hass, 30, self.user)
         self.hass.async_add_executor_job.assert_not_called()
 
     async def test_bad_query_returns_error_without_io(self):
@@ -584,6 +709,24 @@ class IntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([row['device.id'] for row in self.connection.send_result.call_args.args[1]['rows']], ['lamp'])
         self.hass.async_add_executor_job.assert_not_called()
 
+    async def test_device_direct_condition_uses_raw_state(self):
+        self.add_entity('sensor.offline', 'power', 'unknown', device='offline')
+        self.add_entity('sensor.online', 'power', '12', device='online')
+        for selector in ({'field': 'entity.state', 'op': 'eq', 'value': 'unknown'},
+                         {'field': 'entity.state', 'op': 'ne', 'value': '12'}):
+            with self.subTest(selector=selector):
+                await self.run_query(query('devices', where={'has_entity': selector}))
+                self.connection.send_error.assert_not_called()
+                self.assertEqual([row['device.id'] for row in self.connection.send_result.call_args.args[1]['rows']], ['offline'])
+
+    async def test_device_empty_selector_preserves_unloaded_members(self):
+        self.add_entity('sensor.unloaded', 'power')
+        self.states.clear()
+        for where in ({}, {'has_entity': {}}):
+            with self.subTest(where=where):
+                await self.run_query(query('devices', where=where))
+                self.assertEqual([row['device.id'] for row in self.connection.send_result.call_args.args[1]['rows']], ['dev'])
+
     async def test_history_matching_scope_ignores_other_entities(self):
         self.battery_fixture()
         self.updates = {'sensor.battery': self.old, 'sensor.other': self.now}
@@ -628,6 +771,19 @@ class IntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.states['sensor.attr'].attributes['bad'] = object()
         await self.run_query(query(where={'domain': 'sensor'}, columns=['entity.attributes.bad']))
         self.assertEqual(self.connection.send_error.call_args.args[1], 'query_failed')
+
+    async def test_native_datetime_attribute_uses_ha_json_contract(self):
+        from homeassistant.helpers.json import json_bytes
+
+        self.add_entity('sensor.attr', 'none')
+        value = datetime.now(timezone.utc)
+        self.states['sensor.attr'].attributes['updated'] = value
+        await self.run_query(query(where={'domain': 'sensor'}, columns=['entity.attributes.updated']))
+        self.connection.send_error.assert_not_called()
+        result = self.connection.send_result.call_args.args[1]
+        self.assertEqual(result['rows'][0]['entity.attributes.updated'], json.loads(json_bytes(value)))
+        self.assertEqual(result['rows'][0]['entity_id'], 'sensor.attr')
+        self.assertNotIn('_attributes', result['rows'][0])
 
     async def test_response_size_is_bounded(self):
         for i in range(300):
