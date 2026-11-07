@@ -33,6 +33,7 @@ class ValidationTests(unittest.TestCase):
         self.assertIsNone(integration._validate_where(query()))
         self.assertEqual(integration._validate_where(query('devices')), 14)
         self.assertEqual(query()['limit'], 100)
+        self.assertFalse(query()['parse_state'])
 
     def test_nonfinite_and_boolean_thresholds_rejected(self):
         for threshold in ['NaN', 'inf', '-inf', True, False, None, [], {}, 10**400]:
@@ -67,7 +68,7 @@ class ValidationTests(unittest.TestCase):
             self.assertEqual(integration._validate_where(q), int(duration[:-1]))
 
     def test_schema_rejects_invalid_envelope(self):
-        for changes in [{'limit': 0}, {'limit': 501}, {'extra': True}, {'sort': {'extra': True}}]:
+        for changes in [{'limit': 0}, {'limit': 501}, {'extra': True}, {'sort': {'extra': True}}, {'parse_state': []}]:
             with self.subTest(changes=changes), self.assertRaises(integration.vol.Invalid):
                 query(**changes)
 
@@ -229,6 +230,62 @@ class IntegrationTests(unittest.IsolatedAsyncioTestCase):
         await self.run_query(query(where={'device_class': ['power', 'battery', 'temperature']}))
         rows = self.connection.send_result.call_args.args[1]['rows']
         self.assertEqual([row['entity_id'] for row in rows], ['sensor.power', 'sensor.battery', 'sensor.temperature'])
+
+    async def test_parse_state_extracts_general_embedded_units(self):
+        values = {
+            'sensor.spaced': '12.5 W',
+            'sensor.compact': '98.6%',
+            'sensor.zero': '0W',
+            'sensor.negative': '-2.5 kW',
+            'sensor.exponent': '1e3 W',
+            'sensor.invalid': 'unknown',
+            'sensor.nonfinite': '1e999 W',
+            'sensor.malformed': '12 W extra',
+            'sensor.comma': '1,5 kW',
+            'sensor.plain': '12',
+            'sensor.precedence': '7 kW',
+        }
+        for eid, value in values.items():
+            self.add_entity(eid, 'none', value)
+            self.states[eid].attributes['unit_of_measurement'] = ''
+        self.states['sensor.precedence'].attributes['unit_of_measurement'] = 'W'
+        q = query(where={'domain': 'sensor'}, parse_state=True,
+                  columns=['entity_id', 'entity.state', 'entity.unit'], sort={'by': 'entity_id'})
+        await self.run_query(q)
+        rows = self.connection.send_result.call_args.args[1]['rows']
+        self.assertEqual({row['entity_id']: row['entity.state'] for row in rows}, {
+            'sensor.spaced': 12.5, 'sensor.compact': 98.6, 'sensor.zero': 0,
+            'sensor.negative': -2.5, 'sensor.exponent': 1000, 'sensor.invalid': 'unknown',
+            'sensor.nonfinite': '1e999 W', 'sensor.malformed': '12 W extra', 'sensor.comma': '1,5 kW',
+            'sensor.plain': '12', 'sensor.precedence': 7,
+        })
+        self.assertEqual({row['entity_id']: row['entity.unit'] for row in rows}, {
+            'sensor.spaced': 'W', 'sensor.compact': '%', 'sensor.zero': 'W',
+            'sensor.negative': 'kW', 'sensor.exponent': 'W', 'sensor.invalid': '',
+            'sensor.nonfinite': '', 'sensor.malformed': '', 'sensor.comma': '',
+            'sensor.plain': '', 'sensor.precedence': 'W',
+        })
+
+    async def test_parse_state_is_opt_in_and_supports_numeric_filters(self):
+        self.add_entity('sensor.embedded', 'none', '12.5 W')
+        self.states['sensor.embedded'].attributes['unit_of_measurement'] = ''
+        where = {'all': [{'entity_id': 'sensor.embedded'}, {'state': {'gt': 0}}]}
+        await self.run_query(query(where=where))
+        self.assertEqual(self.connection.send_result.call_args.args[1]['rows'], [])
+        await self.run_query(query(where=where, parse_state=True, columns=['entity.state', 'entity.unit']))
+        rows = self.connection.send_result.call_args.args[1]['rows']
+        self.assertEqual([{key: row[key] for key in ('entity.state', 'entity.unit')} for row in rows],
+                         [{'entity.state': 12.5, 'entity.unit': 'W'}])
+
+    async def test_parse_state_preserves_power_and_battery_conversion(self):
+        self.add_entity('sensor.power', 'power', '12.5 W')
+        self.add_entity('sensor.battery', 'battery', '98%')
+        await self.run_query(query(where={'device_class': ['power', 'battery']}, parse_state=True,
+                                   columns=['entity_id', 'entity.state'], sort={'by': 'entity_id'}))
+        rows = self.connection.send_result.call_args.args[1]['rows']
+        self.assertEqual([{key: row[key] for key in ('entity_id', 'entity.state')} for row in rows],
+                         [{'entity_id': 'sensor.battery', 'entity.state': 98},
+                          {'entity_id': 'sensor.power', 'entity.state': 12.5}])
 
     async def test_entity_id_name_patterns_exclusions_and_permissions(self):
         self.add_entity('sensor.kitchen_temperature', 'temperature', name='Kitchen Temperature')
@@ -506,6 +563,17 @@ class IntegrationTests(unittest.IsolatedAsyncioTestCase):
         result = self.connection.send_result.call_args.args[1]
         self.assertEqual([{key: row[key] for key in result['columns']} for row in result['rows']],
                          [{'device.name': 'Device', 'device.manufacturer': 'Test'}])
+        self.hass.async_add_executor_job.assert_not_called()
+
+    async def test_device_entity_filters_support_parse_state(self):
+        self.add_entity('sensor.embedded', 'none', '12.5 W', device='meter')
+        q = {'from': 'devices', 'parse_state': True, 'where': {'has_entity': {'state': {'gt': 0}}},
+             'columns': ['device.id'], 'sort': {}, 'limit': 100}
+        await self.run_query(q)
+        self.assertEqual([row['device.id'] for row in self.connection.send_result.call_args.args[1]['rows']], ['meter'])
+        q['parse_state'] = False
+        await self.run_query(q)
+        self.assertEqual(self.connection.send_result.call_args.args[1]['rows'], [])
         self.hass.async_add_executor_job.assert_not_called()
 
     async def test_device_empty_query_lists_readable_registered_devices(self):

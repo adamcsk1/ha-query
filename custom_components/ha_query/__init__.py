@@ -7,6 +7,7 @@ import json
 import logging
 from math import isfinite
 from pathlib import Path
+import re
 import sqlite3
 
 import voluptuous as vol
@@ -39,6 +40,7 @@ QUERY_SCHEMA = vol.Schema({
         vol.Optional('descending', default=False): bool,
     }, extra=vol.PREVENT_EXTRA),
     vol.Optional('limit', default=100): vol.All(vol.Coerce(int), vol.Range(min=1, max=500)),
+    vol.Optional('parse_state', default=False): bool,
 }, extra=vol.PREVENT_EXTRA)
 WS_SCHEMA = {vol.Required('type'): 'ha_query/run', vol.Required('query'): QUERY_SCHEMA}
 
@@ -62,6 +64,24 @@ def _number(state) -> float | None:
     return value if isfinite(value) else None
 
 
+EMBEDDED_NUMBER = re.compile(r'\s*([+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:e[+-]?[0-9]+)?)\s*([^\d\s]\S*)\s*', re.IGNORECASE)
+
+
+def _embedded_number(value) -> tuple[float, str] | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        float(value)
+    except (TypeError, ValueError, OverflowError):
+        pass
+    else:
+        return None
+    if not (match := EMBEDDED_NUMBER.fullmatch(value)):
+        return None
+    number = float(match[1])
+    return (number, match[2]) if isfinite(number) else None
+
+
 def _attribute(attributes: dict, field: str):
     value = attributes
     for part in field.split('.')[2:]:
@@ -78,18 +98,24 @@ def _device_attribute(device, field: str) -> str:
     return getattr(device, field, None) or ''
 
 
-def _entity_row(hass: HomeAssistant, state, registry, devices, areas) -> dict:
+def _entity_row(hass: HomeAssistant, state, registry, devices, areas, parse_state=False) -> dict:
     entry = registry.async_get(state.entity_id)
     device = devices.async_get(entry.device_id) if entry and entry.device_id else None
     device_class = state.attributes.get('device_class')
     unit = state.attributes.get('unit_of_measurement', '')
     numeric = _number(state)
+    raw_value = state.state
+    embedded = _embedded_number(state.state) if parse_state else None
+    if embedded:
+        numeric, parsed_unit = embedded
+        raw_value = numeric
+        unit = unit or parsed_unit
     if device_class == 'power':
         value = numeric
     elif device_class == 'battery' and unit == '%':
         value = numeric if numeric is not None and 0 <= numeric <= 100 else None
     else:
-        value = state.state
+        value = raw_value
     return {
         'entity_id': state.entity_id,
         'domain': state.domain,
@@ -114,7 +140,7 @@ def _entities(hass: HomeAssistant, query: dict, user) -> list[dict]:
     for state in hass.states.async_all():
         if not user.permissions.check_entity(state.entity_id, POLICY_READ):
             continue
-        row = _entity_row(hass, state, registry, devices, areas)
+        row = _entity_row(hass, state, registry, devices, areas, query.get('parse_state', False))
         if matches(expression, row):
             for field in [*query.get('columns', []), query.get('sort', {}).get('by')]:
                 if isinstance(field, str) and field.startswith('entity.attributes.'):
@@ -198,7 +224,7 @@ async def _devices(hass: HomeAssistant, query: dict, user) -> tuple[list[dict], 
     for device_id, entity_ids in grouped.items():
         if not all(user.permissions.check_entity(entity_id, POLICY_READ) for entity_id in entity_ids):
             continue
-        entity_rows = [_entity_row(hass, state, registry, devices, areas) for entity_id in entity_ids
+        entity_rows = [_entity_row(hass, state, registry, devices, areas, query.get('parse_state', False)) for entity_id in entity_ids
                        if (state := hass.states.get(entity_id)) is not None]
         matched = [row for row in entity_rows if matches(expression, row)]
         if expression.children and not matched:
