@@ -163,9 +163,9 @@ class IntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.handler = register.call_args.args[1]
         self.hass.data[integration.DOMAIN]['active'] = object()
 
-    def add_entity(self, eid, device_class, value='50', device='dev', disabled=None):
+    def add_entity(self, eid, device_class, value='50', device='dev', disabled=None, name=None):
         self.entities[eid] = NS(entity_id=eid, device_id=device, disabled_by=disabled, area_id=None, platform='test')
-        self.states[eid] = NS(entity_id=eid, domain=eid.split('.')[0], name=eid, state=value,
+        self.states[eid] = NS(entity_id=eid, domain=eid.split('.')[0], name=name or eid, state=value,
                               attributes={'device_class': device_class, 'unit_of_measurement': '%' if device_class == 'battery' else 'W'})
         self.devices[device] = NS(id=device, name='Device', name_by_user=None, area_id=None, manufacturer='Test', model='Model')
 
@@ -218,6 +218,43 @@ class IntegrationTests(unittest.IsolatedAsyncioTestCase):
         await self.run_query(query(where={'device_class': 'battery', 'state': {'gt': 10}}))
         rows = self.connection.send_result.call_args.args[1]['rows']
         self.assertEqual([r['entity_id'] for r in rows], ['sensor.high'])
+
+    async def test_multiple_device_classes_keep_power_and_battery_guards(self):
+        self.add_entity('sensor.power', 'power', '10')
+        self.add_entity('binary_sensor.power', 'power', 'on')
+        self.add_entity('sensor.battery', 'battery', '80')
+        self.add_entity('sensor.battery_volts', 'battery', '12')
+        self.states['sensor.battery_volts'].attributes['unit_of_measurement'] = 'V'
+        self.add_entity('sensor.temperature', 'temperature', '20')
+        await self.run_query(query(where={'device_class': ['power', 'battery', 'temperature']}))
+        rows = self.connection.send_result.call_args.args[1]['rows']
+        self.assertEqual([row['entity_id'] for row in rows], ['sensor.power', 'sensor.battery', 'sensor.temperature'])
+
+    async def test_entity_id_name_patterns_exclusions_and_permissions(self):
+        self.add_entity('sensor.kitchen_temperature', 'temperature', name='Kitchen Temperature')
+        self.add_entity('sensor.office_temperature', 'temperature', name='Office Temperature')
+        self.add_entity('sensor.kitchen_test', 'temperature', name='Kitchen Test Temperature')
+        self.add_entity('sensor.kitchen_humidity', 'humidity', name='Kitchen Humidity')
+        self.add_entity('sensor.kitchen_secret', 'temperature', name='Kitchen Secret Temperature')
+        self.denied.add('sensor.kitchen_secret')
+        await self.run_query(query(where={
+            'entity_id': ['sensor.kitchen_*', 'sensor.office_*'],
+            'entity_name': '*Temperature*',
+            'exclude': {'entity_id': 'sensor.*_test', 'entity_name': '*Humidity*'},
+        }))
+        rows = self.connection.send_result.call_args.args[1]['rows']
+        self.assertEqual([row['entity_id'] for row in rows], ['sensor.kitchen_temperature', 'sensor.office_temperature'])
+
+    async def test_exclusion_combines_with_boolean_filters(self):
+        self.add_entity('light.office', 'none', 'on', name='Office')
+        self.add_entity('light.test', 'none', 'on', name='Office Test')
+        self.add_entity('switch.office', 'none', 'on', name='Office Switch')
+        await self.run_query(query(where={
+            'all': [{'domain': {'in': ['light', 'switch']}}, {'state': 'on'}],
+            'exclude': {'entity_name': '*Test*'},
+        }))
+        rows = self.connection.send_result.call_args.args[1]['rows']
+        self.assertEqual([row['entity_id'] for row in rows], ['light.office', 'switch.office'])
 
     async def test_entity_area_override_device_fallback_and_unassigned(self):
         self.add_entity('sensor.power', 'power')
@@ -488,6 +525,24 @@ class IntegrationTests(unittest.IsolatedAsyncioTestCase):
         rows = self.connection.send_result.call_args.args[1]['rows']
         self.assertEqual(rows[0]['history.status'], 'inactive')
         await self.run_query(query('devices'))
+        self.assertEqual(self.connection.send_result.call_args.args[1]['rows'], [])
+
+    async def test_device_exclusions_apply_to_matching_history_not_permissions(self):
+        self.battery_fixture()
+        self.updates = {'sensor.battery': self.now, 'sensor.other': self.old}
+        q = query('devices', where={
+            'has_entity': {'entity_id': 'sensor.*', 'exclude': {'entity_id': 'sensor.battery'}},
+            'history': {'scope': 'matching_entities'},
+        })
+        await self.run_query(q)
+        rows = self.connection.send_result.call_args.args[1]['rows']
+        self.assertEqual(rows[0]['history.status'], 'inactive')
+        q['where']['history']['scope'] = 'all_entities'
+        await self.run_query(q)
+        self.assertEqual(self.connection.send_result.call_args.args[1]['rows'], [])
+        self.denied.add('sensor.battery')
+        q['where']['history']['scope'] = 'matching_entities'
+        await self.run_query(q)
         self.assertEqual(self.connection.send_result.call_args.args[1]['rows'], [])
 
     async def test_custom_history_duration_status_uses_cutoff(self):

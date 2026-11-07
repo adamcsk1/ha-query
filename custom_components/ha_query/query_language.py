@@ -9,7 +9,8 @@ MISSING = object()
 GROUPS = {'all', 'any', 'not'}
 OPERATORS = {'eq', 'ne', 'gt', 'gte', 'lt', 'lte', 'in', 'contains', 'starts_with', 'ends_with', 'exists'}
 ALIASES = {'domain': 'domain', 'device_class': 'entity.attributes.device_class', 'state': 'entity.state',
-           'unit': 'entity.unit', 'name': 'entity.name'}
+           'unit': 'entity.unit', 'name': 'entity.name', 'entity_name': 'entity.name'}
+WILDCARD_FIELDS = {'entity_id', 'entity.name'}
 BASE_FIELDS = {
     'entity_id', 'domain', 'entity.name', 'entity.state', 'entity.unit', 'entity.disabled', 'entity.platform',
     'device.id', 'device.name', 'device.manufacturer', 'device.model', 'area.id', 'area.name', 'battery.level',
@@ -79,11 +80,30 @@ def _condition(field: Any, op: Any, value: Any = None, *, has_value: bool = True
         raise ValueError(f'{op} requires a scalar value')
     elif not _scalar(value):
         raise ValueError(f'{op} requires a scalar value')
+    patterns = value if op == 'in' else [value]
+    if field in WILDCARD_FIELDS and op in {'eq', 'in'} and any(
+            isinstance(pattern, str) and '*' in pattern and len(pattern) > 256 for pattern in patterns):
+        raise ValueError('Wildcard patterns must contain at most 256 characters')
     return Condition(field, op, value)
 
 
 def _scalar(value: Any) -> bool:
     return value is None or isinstance(value, (str, int, float, bool))
+
+
+def _exclusions(value: Any, budget: list[int]) -> Group:
+    if not isinstance(value, dict) or not value:
+        raise ValueError('exclude must be a non-empty mapping of entity_id or entity_name patterns')
+    result = []
+    for field, operand in value.items():
+        field = ALIASES.get(field, field)
+        if field not in WILDCARD_FIELDS:
+            raise ValueError('exclude supports only entity_id and entity_name')
+        result.append(_condition(field, 'in' if isinstance(operand, list) else 'eq', operand))
+        budget[0] += 1
+        if budget[0] > 100:
+            raise ValueError('Filter exceeds 100 conditions')
+    return Group('not', (Group('any', tuple(result)),))
 
 
 def parse_filter(value: Any, depth: int = 0, budget: list[int] | None = None) -> Any:
@@ -93,6 +113,9 @@ def parse_filter(value: Any, depth: int = 0, budget: list[int] | None = None) ->
         raise ValueError('Filter nesting exceeds 8 levels')
     if not isinstance(value, dict):
         raise ValueError('Filter must be a mapping')
+    if 'exclude' in value:
+        positive = {key: operand for key, operand in value.items() if key != 'exclude'}
+        return Group('all', (parse_filter(positive, depth, budget), _exclusions(value['exclude'], budget)))
     if len(value) == 1 and (group := next(iter(value))) in GROUPS:
         children = value[group]
         if not isinstance(children, list) or not children or (group == 'not' and len(children) != 1):
@@ -151,13 +174,21 @@ def validate_query(query: dict) -> tuple[Any, dict | None]:
     expression = parse_filter(where)
     # Preserve the original examples' sensor/unit/missing-value semantics.
     # Explicit entity.attributes.* filters use the unrestricted generic path.
-    if source == 'entities' and set(where) <= {'device_class', 'state'} and where.get('device_class') in {'power', 'battery'}:
-        legacy = [Condition('domain', 'eq', 'sensor')]
-        if where['device_class'] == 'battery':
-            legacy.append(Condition('entity.unit', 'eq', '%'))
-        else:
-            legacy.append(Condition('entity.state', 'exists', True))
-        expression = Group('all', (*expression.children, *legacy))
+    positive_keys = set(where) - {'exclude'}
+    classes = where.get('device_class')
+    class_list = classes if isinstance(classes, list) else [classes]
+    if source == 'entities' and positive_keys <= {'device_class', 'state'} and any(
+            isinstance(device_class, str) and device_class in {'power', 'battery'} for device_class in class_list):
+        legacy = []
+        for device_class in class_list:
+            branch = [Condition('entity.attributes.device_class', 'eq', device_class)]
+            if device_class in {'power', 'battery'}:
+                branch.append(Condition('domain', 'eq', 'sensor'))
+                branch.append(Condition('entity.unit' if device_class == 'battery' else 'entity.state',
+                                        'eq' if device_class == 'battery' else 'exists',
+                                        '%' if device_class == 'battery' else True))
+            legacy.append(Group('all', tuple(branch)))
+        expression = Group('all', (*expression.children, Group('any', tuple(legacy))))
     columns = query.get('columns', [])
     if not 0 <= len(columns) <= 32 or len(set(columns)) != len(columns):
         raise ValueError('Columns must contain at most 32 unique fields')
@@ -178,6 +209,34 @@ def _equal(actual: Any, expected: Any) -> bool:
     return str(actual) == str(expected)
 
 
+def _wildcard_match(actual: str, pattern: str) -> bool:
+    actual_index = pattern_index = 0
+    star = retry = -1
+    while actual_index < len(actual):
+        if pattern_index < len(pattern) and pattern[pattern_index] == actual[actual_index] and pattern[pattern_index] != '*':
+            actual_index += 1
+            pattern_index += 1
+        elif pattern_index < len(pattern) and pattern[pattern_index] == '*':
+            star = pattern_index
+            retry = actual_index
+            pattern_index += 1
+        elif star >= 0:
+            pattern_index = star + 1
+            retry += 1
+            actual_index = retry
+        else:
+            return False
+    while pattern_index < len(pattern) and pattern[pattern_index] == '*':
+        pattern_index += 1
+    return pattern_index == len(pattern)
+
+
+def _text_equal(condition: Condition, actual: Any, expected: Any) -> bool:
+    if condition.field in WILDCARD_FIELDS and isinstance(actual, str) and isinstance(expected, str) and '*' in expected:
+        return _wildcard_match(actual, expected)
+    return _equal(actual, expected)
+
+
 def evaluate_condition(condition: Condition, row: dict) -> bool:
     actual = row.get(condition.field, MISSING)
     if actual is MISSING and condition.field.startswith('entity.attributes.'):
@@ -193,11 +252,11 @@ def evaluate_condition(condition: Condition, row: dict) -> bool:
     if actual is MISSING or actual is None:
         return False
     if op == 'eq':
-        return _equal(actual, expected)
+        return _text_equal(condition, actual, expected)
     if op == 'ne':
         return not _equal(actual, expected)
     if op == 'in':
-        return any(_equal(actual, item) for item in expected)
+        return any(_text_equal(condition, actual, item) for item in expected)
     if op in {'gt', 'gte', 'lt', 'lte'}:
         left, right = _number(actual), _number(expected)
         if left is None or right is None:
