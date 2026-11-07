@@ -2,7 +2,7 @@
 from copy import deepcopy
 import unittest
 
-from custom_components.ha_query.query_language import matches, parse_filter, validate_query
+from custom_components.ha_query.query_language import matches, parse_filter, uses_legacy_state, validate_query
 
 
 def entity_query(where, **changes):
@@ -212,6 +212,34 @@ class QueryLanguageTests(unittest.TestCase):
         parse_filter(nested)
         with self.assertRaisesRegex(ValueError, 'nesting'):
             parse_filter({'not': [nested]})
+
+    def test_empty_filters_cannot_bypass_work_budget(self):
+        self.assertTrue(matches(parse_filter({}), {}))
+        self.assertTrue(matches(parse_filter({'all': [{}] * 100}), {}))
+        with self.assertRaisesRegex(ValueError, '100 children'):
+            parse_filter({'all': [{}] * 10000})
+        # Every group stays within its width limit; the whole tree must also fit.
+        bounded = {'all': [{'all': [{}, {}]} for _ in range(85)]}
+        self.assertTrue(matches(parse_filter(bounded), {}))
+        bounded['all'].append({'all': [{}, {}]})
+        with self.assertRaisesRegex(ValueError, '256 nodes'):
+            parse_filter(bounded)
+
+    def test_nested_groups_without_conditions_are_bounded(self):
+        for group in ('all', 'any'):
+            with self.subTest(group=group), self.assertRaisesRegex(ValueError, '256 nodes'):
+                validate_query(entity_query({group: [{'all': [{}, {}]} for _ in range(100)],
+                                             'exclude': {'entity_id': 'sensor.test'}}))
+
+    def test_legacy_state_mode_is_limited_to_original_shorthand(self):
+        for where in [{'device_class': 'power'}, {'device_class': ['battery', 'power'], 'state': {'gt': 0}},
+                      {'device_class': 'battery', 'exclude': {'entity_id': 'sensor.test'}}]:
+            self.assertTrue(uses_legacy_state(entity_query(where)))
+        for where in [{}, {'device_class': 'temperature'}, {'device_class': 'battery', 'domain': 'sensor'},
+                      {'field': 'entity.state', 'op': 'eq', 'value': 'unavailable'},
+                      {'all': [{'device_class': 'power'}]}]:
+            self.assertFalse(uses_legacy_state(entity_query(where)))
+        self.assertFalse(uses_legacy_state({'from': 'devices', 'where': {'has_entity': {'device_class': 'power'}}}))
 
     def test_device_fields_are_limited_to_device_rows(self):
         for field in ['entity.state', 'entity.attributes.battery', 'domain', 'history.bad']:

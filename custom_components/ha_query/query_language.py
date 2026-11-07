@@ -6,6 +6,8 @@ from math import isfinite
 from typing import Any
 
 MISSING = object()
+MAX_FILTER_NODES = 256
+MAX_GROUP_CHILDREN = 100
 GROUPS = {'all', 'any', 'not'}
 OPERATORS = {'eq', 'ne', 'gt', 'gte', 'lt', 'lte', 'in', 'contains', 'starts_with', 'ends_with', 'exists'}
 ALIASES = {'domain': 'domain', 'device_class': 'entity.attributes.device_class', 'state': 'entity.state',
@@ -28,7 +30,10 @@ class Condition:
 @dataclass(frozen=True)
 class Group:
     op: str
-    children: tuple[Any, ...]
+    children: tuple[Expression, ...]
+
+
+type Expression = Condition | Group
 
 
 def valid_field(field: Any, source: str = 'entities') -> bool:
@@ -106,9 +111,12 @@ def _exclusions(value: Any, budget: list[int]) -> Group:
     return Group('not', (Group('any', tuple(result)),))
 
 
-def parse_filter(value: Any, depth: int = 0, budget: list[int] | None = None) -> Any:
+def parse_filter(value: Any, depth: int = 0, budget: list[int] | None = None) -> Expression:
     if budget is None:
-        budget = [0]
+        budget = [0, 0]
+    budget[1] += 1
+    if budget[1] > MAX_FILTER_NODES:
+        raise ValueError(f'Filter exceeds {MAX_FILTER_NODES} nodes')
     if depth > 8:
         raise ValueError('Filter nesting exceeds 8 levels')
     if not isinstance(value, dict):
@@ -120,6 +128,8 @@ def parse_filter(value: Any, depth: int = 0, budget: list[int] | None = None) ->
         children = value[group]
         if not isinstance(children, list) or not children or (group == 'not' and len(children) != 1):
             raise ValueError(f'{group} requires {"exactly one" if group == "not" else "a non-empty list of"} filter(s)')
+        if len(children) > MAX_GROUP_CHILDREN:
+            raise ValueError(f'Filter group exceeds {MAX_GROUP_CHILDREN} children (at most 100 conditions)')
         return Group(group, tuple(parse_filter(child, depth + 1, budget) for child in children))
     if 'field' in value or 'op' in value:
         if set(value) - {'field', 'op', 'value'} or not {'field', 'op'} <= set(value):
@@ -146,7 +156,16 @@ def parse_filter(value: Any, depth: int = 0, budget: list[int] | None = None) ->
     return Group('all', tuple(result))
 
 
-def validate_query(query: dict) -> tuple[Any, dict | None]:
+def uses_legacy_state(query: dict) -> bool:
+    """Keep numeric/null state output only for the original sensor shorthand."""
+    where = query['where']
+    classes = where.get('device_class')
+    class_list = classes if isinstance(classes, list) else [classes]
+    return query['from'] == 'entities' and set(where) - {'exclude'} <= {'device_class', 'state'} and any(
+        isinstance(device_class, str) and device_class in {'power', 'battery'} for device_class in class_list)
+
+
+def validate_query(query: dict) -> tuple[Expression, dict | None]:
     if not isinstance(query.get('where'), dict):
         raise ValueError('where must be a mapping')
     source = query['from']
@@ -174,11 +193,9 @@ def validate_query(query: dict) -> tuple[Any, dict | None]:
     expression = parse_filter(where)
     # Preserve the original examples' sensor/unit/missing-value semantics.
     # Explicit entity.attributes.* filters use the unrestricted generic path.
-    positive_keys = set(where) - {'exclude'}
     classes = where.get('device_class')
     class_list = classes if isinstance(classes, list) else [classes]
-    if source == 'entities' and positive_keys <= {'device_class', 'state'} and any(
-            isinstance(device_class, str) and device_class in {'power', 'battery'} for device_class in class_list):
+    if uses_legacy_state(query):
         legacy = []
         for device_class in class_list:
             branch = [Condition('entity.attributes.device_class', 'eq', device_class)]
@@ -275,7 +292,7 @@ def evaluate_condition(condition: Condition, row: dict) -> bool:
     raise AssertionError('Validated operator is not implemented')
 
 
-def matches(expression: Any, row: dict) -> bool:
+def matches(expression: Expression, row: dict) -> bool:
     if isinstance(expression, Condition):
         return evaluate_condition(expression, row)
     if expression.op == 'all':
