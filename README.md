@@ -17,6 +17,7 @@ Query any loaded entity domain, compare state and nested attributes, combine con
 - Generic filters across all loaded entity domains
 - Boolean `all`, `any`, and `not` groups
 - Numeric, text, membership, containment, and existence operators
+- Multi-value device-class filters, entity ID/name wildcards, and exclusions
 - Nested state attributes, registry, device, and area fields
 - Generic device selection through matching entities
 - Device inactivity across all enabled entities or only matching entities
@@ -56,6 +57,7 @@ lovelace:
 - [Inactive battery devices](examples/inactive-battery-devices.yaml): devices whose enabled registered entities have no recorded changes for 14 days.
 - [Current power usage](examples/current-power-usage.yaml): live power readings above zero.
 - [Lights on by area](examples/lights-on-by-area.yaml): generic filter combining domain and state conditions.
+- [Filtered sensors by area](examples/filtered-sensors-by-area.yaml): entity ID/name wildcards and exclusions.
 
 These are complete card configurations. Copy an example into a **Manual** dashboard card and adjust it as needed.
 
@@ -121,9 +123,31 @@ where:
     gt: 0
 ```
 
-Aliases: `state` means `entity.state`, `device_class` means `entity.attributes.device_class`, `unit` means `entity.unit`, and `name` means `entity.name`. Domain, state, entity ID, entity/device/area metadata, and `entity.attributes.*` paths can also be used directly.
+Aliases: `state` means `entity.state`, `device_class` means `entity.attributes.device_class`, `unit` means `entity.unit`, and `name`/`entity_name` means `entity.name`. Domain, state, entity ID, entity/device/area metadata, and `entity.attributes.*` paths can also be used directly. Multiple device classes are supported with a list such as `device_class: [power, battery]`.
 
-The original power and battery shorthand retains its sensor-domain, unit, and missing-reading behavior. Use explicit `entity.attributes.device_class` conditions for unrestricted generic battery queries.
+For `entity_id`, `name`, and `entity_name`, `*` matches zero or more characters. Matching is case-sensitive and covers the whole value; other characters, including regex and glob metacharacters, are literal. Patterns are limited to 256 characters. Multiple values or patterns in one list use OR, while separate filter fields use AND:
+
+```yaml
+where:
+  entity_id: [sensor.kitchen_*, sensor.office_*]
+  entity_name: ["*Temperature*", "*Humidity*"]
+```
+
+Add `exclude` beside any entity filter to reject matching entity IDs or names. It accepts scalar values or arrays; any matching entry excludes the entity. Exclusions can be combined with shorthand, boolean groups, or used alone:
+
+```yaml
+where:
+  device_class: [power, battery]
+  exclude:
+    entity_id:
+      - sensor.kitchen_test
+      - sensor.*_calibration
+    entity_name:
+      - "*Test*"
+      - "*Disabled*"
+```
+
+The original power and battery shorthand retains its sensor-domain, unit, and missing-reading behavior. Lists containing those classes apply the same requirements per class. Use explicit `entity.attributes.device_class` conditions for unrestricted generic battery queries.
 
 ### Fields and results
 
@@ -146,7 +170,7 @@ The default refresh interval is five minutes. Set `refresh_seconds` to a number 
 
 ## Device queries and history
 
-Use `from: devices`. `has_entity` accepts the same generic entity filters and requires at least one matching loaded entity. Omitting it selects all readable registered devices with enabled entities. Additional device conditions belong in `has_entity` when they describe the matching entity.
+Use `from: devices`. `has_entity` accepts the same generic entity filters, wildcards, and exclusions and requires at least one matching loaded entity. Omitting it selects all readable registered devices with enabled entities. Additional device conditions belong in `has_entity` when they describe the matching entity. With `history.scope: matching_entities`, history uses only entities remaining after exclusions; device permission checks still cover every participating entity.
 
 ```yaml
 from: devices

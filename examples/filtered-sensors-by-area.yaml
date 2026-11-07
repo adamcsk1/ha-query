@@ -1,0 +1,28 @@
+type: custom:ha-query-card
+title: Filtered sensors by area
+group_by: area
+refresh_seconds: 60
+query:
+  from: entities
+  where:
+    entity_id:
+      - sensor.kitchen_*
+      - sensor.office_*
+    entity_name:
+      - "*Temperature*"
+      - "*Humidity*"
+    exclude:
+      entity_id:
+        - sensor.kitchen_test
+        - sensor.*_calibration
+      entity_name:
+        - "*Test*"
+        - "*Disabled*"
+  columns:
+    - entity.name
+    - entity.state
+    - entity.unit
+  sort:
+    by: entity.name
+    descending: false
+  limit: 500
