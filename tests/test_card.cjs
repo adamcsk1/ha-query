@@ -400,7 +400,7 @@ test('events debounce bursts and follow device-history queries too', async () =>
 
 test('history events are rate limited and retain one trailing refresh', async () => {
   const {card, hass, requests, subscriptions, timeouts, fireTimeouts, advanceTime} = fixture();
-  card.setConfig({query: {from: 'devices', where: {}, history: {}}});
+  card.setConfig({query: {from: 'devices', where: {history: {no_changes_for: '14d'}}}});
   card.hass = hass;
   await tick();
   subscriptions.forEach(item => item.resolve(() => {}));

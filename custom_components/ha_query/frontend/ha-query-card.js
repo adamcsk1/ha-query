@@ -136,7 +136,7 @@ class HaQueryCard extends HTMLElement {
     this._eventTimer = null;
   }
   _eventRefreshDelay() {
-    if (this._config.query.from !== 'devices' || !this._config.query.history) return 0;
+    if (this._config.query.from !== 'devices' || !this._config.query.where.history) return 0;
     return Math.max(0, HISTORY_EVENT_REFRESH_MS - (Date.now() - this._lastRefresh));
   }
   _queueRefresh() {
