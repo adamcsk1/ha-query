@@ -192,7 +192,7 @@ Add `group_by: area` to the card configuration. Areas render as separate respons
 
 The card subscribes to Home Assistant's permission-filtered entity updates and entity/device/area registry changes through the existing WebSocket connection. These events trigger a query refresh for every query type, not only door sensors. Bursts are combined with a 250 ms delay, and an event arriving during a request schedules one trailing refresh. Event-driven device history queries are limited to one per minute to avoid repeated Recorder reads. Disconnected cards stop subscriptions; reconnecting and HA-connection changes establish fresh subscriptions.
 
-`refresh_seconds` remains a periodic fallback for time-based history cutoffs, Recorder commits, missed events, and failed event subscriptions. It does not mean that ordinary state updates wait for the timer. The default interval is five minutes; set a number from 60 through 2,147,483 to change it.
+`refresh_seconds` remains a periodic fallback for time-based history cutoffs, Recorder commits, missed events, and failed event subscriptions. Failed subscriptions retry after 60 seconds without replacing healthy subscriptions. The default interval is five minutes; set a number from 60 through 2,147,483 to change it.
 
 ### Binary sensor state colors
 

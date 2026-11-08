@@ -48,6 +48,7 @@ const CARD_STYLES = `
 `;
 const EVENT_REFRESH_MS = 250;
 const HISTORY_EVENT_REFRESH_MS = 60_000;
+const SUBSCRIPTION_RETRY_MS = 60_000;
 const REGISTRY_EVENTS = ['entity_registry_updated', 'device_registry_updated', 'area_registry_updated'];
 const FIELD_LABELS = {
   entity_id: 'Entity ID', 'entity.name': 'Entity', 'entity.state': 'State', 'entity.unit': 'Unit',
@@ -170,31 +171,79 @@ class HaQueryCard extends HTMLElement {
       this._fetch();
     }, Math.max(EVENT_REFRESH_MS, this._eventRefreshDelay()));
   }
-  _stopSubscriptions() {
+  _resetSubscriptions() {
     for (const unsubscribe of this._unsubscribes || []) unsubscribe();
     this._unsubscribes = [];
+    this._failedSubscriptions = new Set();
+    this._subscriptionRetryAt = 0;
+    if (this._subscriptionRetryTimer) clearTimeout(this._subscriptionRetryTimer);
+    this._subscriptionRetryTimer = null;
     this._subscriptionsConnection = null;
     this._subscriptionsStarting = false;
     this._subscriptionsGeneration = null;
   }
+  _stopSubscriptions() {
+    this._resetSubscriptions();
+    if (this._readyConnection && this._readyListener) {
+      this._readyConnection.removeEventListener('ready', this._readyListener);
+    }
+    this._readyConnection = null;
+    this._readyListener = null;
+  }
+  _scheduleSubscriptionRetry() {
+    if (this._subscriptionRetryTimer) return;
+    this._subscriptionRetryTimer = setTimeout(() => {
+      this._subscriptionRetryTimer = null;
+      if (Date.now() < this._subscriptionRetryAt) {
+        this._scheduleSubscriptionRetry();
+        return;
+      }
+      this._startSubscriptions();
+    }, Math.max(0, this._subscriptionRetryAt - Date.now()));
+  }
   _startSubscriptions() {
     const connection = this._hass?.connection;
-    if (this._subscriptionsStarting || this._subscriptionsConnection === connection
+    const failed = this._failedSubscriptions || new Set();
+    const retry = failed.size > 0 && Date.now() >= this._subscriptionRetryAt;
+    if (this._subscriptionsStarting || (this._subscriptionsConnection === connection && !retry)
         || !connection?.subscribeMessage || !this.isConnected || !this._config) return;
+    if (this._readyConnection !== connection) {
+      const ready = () => {
+        if (this._hass?.connection !== connection || !this.isConnected || !this._config) return;
+        this._generation = (this._generation || 0) + 1;
+        this._resetSubscriptions();
+        this._startSubscriptions();
+        this._queueRefresh();
+      };
+      connection.addEventListener('ready', ready);
+      this._readyConnection = connection;
+      this._readyListener = ready;
+    }
     const generation = this._generation;
     this._subscriptionsStarting = true;
     this._subscriptionsGeneration = generation;
     const active = () => this._subscriptionsConnection === connection && this._subscriptionsGeneration === generation
       && this.isConnected && this._hass?.connection === connection;
-    const subscribe = (message, callback) => connection.subscribeMessage(callback, message).then(unsubscribe => {
-      if (!active()) { unsubscribe(); return; }
-      this._unsubscribes.push(unsubscribe);
-    }).catch(error => {
-      console.warn('HA Query event subscription failed; periodic refresh remains active', error);
-    });
-    subscribe({type: 'subscribe_entities'}, () => { if (active()) this._queueRefresh(); });
-    for (const event_type of REGISTRY_EVENTS) {
-      subscribe({type: 'subscribe_events', event_type}, () => { if (active()) this._queueRefresh(); });
+    const subscribe = message => {
+      const key = message.event_type || message.type;
+      failed.delete(key);
+      connection.subscribeMessage(() => { if (active()) this._queueRefresh(); }, message, {resubscribe: false}).then(unsubscribe => {
+        if (!active()) { unsubscribe(); return; }
+        this._unsubscribes.push(unsubscribe);
+      }).catch(error => {
+        if (!active()) return;
+        failed.add(key);
+        this._subscriptionRetryAt = Date.now() + SUBSCRIPTION_RETRY_MS;
+        this._scheduleSubscriptionRetry();
+        console.warn('HA Query event subscription failed; periodic refresh remains active', error);
+      });
+    };
+    const messages = [{type: 'subscribe_entities'},
+      ...REGISTRY_EVENTS.map(event_type => ({type: 'subscribe_events', event_type}))];
+    for (const message of messages) {
+      if (this._subscriptionsConnection !== connection || failed.has(message.event_type || message.type)) {
+        subscribe(message);
+      }
     }
     this._subscriptionsConnection = connection;
     this._subscriptionsStarting = false;

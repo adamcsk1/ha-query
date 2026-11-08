@@ -47,17 +47,22 @@ function fixture() {
   const requests = [];
   const subscriptions = [];
   const unsubscribes = [];
+  const connectionListeners = {};
   const hass = {
     callWS: message => new Promise((resolve, reject) => requests.push({message, resolve, reject})),
     connection: {
-      subscribeMessage: (callback, message) => {
-        return new Promise((resolve, reject) => subscriptions.push({callback, message, resolve, reject}));
+      subscribeMessage: (callback, message, options) => {
+        return new Promise((resolve, reject) => subscriptions.push({callback, message, options, resolve, reject}));
       },
+      addEventListener: (type, callback) => { (connectionListeners[type] ||= new Set()).add(callback); },
+      removeEventListener: (type, callback) => { connectionListeners[type]?.delete(callback); },
     },
   };
+  const fireConnectionEvent = type => { for (const callback of [...(connectionListeners[type] || [])]) callback(); };
   const fireTimeouts = () => { const pending = [...timeouts.values()]; timeouts.clear(); for (const timer of pending) timer.callback(); };
   const advanceTime = milliseconds => { now += milliseconds; };
-  return {card, intervals, timeouts, fireTimeouts, advanceTime, requests, subscriptions, unsubscribes, hass};
+  return {card, intervals, timeouts, fireTimeouts, advanceTime, requests, subscriptions, unsubscribes, hass,
+    connectionListeners, fireConnectionEvent};
 }
 
 function descendants(node) {
@@ -458,6 +463,98 @@ test('entity queries subscribe to state and registry changes once connected', as
   assert.equal(card._unsubscribes.length, 4);
 });
 
+test('failed entity subscription retries alone after a bounded delay', async () => {
+  const {card, hass, requests, subscriptions, timeouts, fireTimeouts, advanceTime, unsubscribes} = fixture();
+  card.setConfig(config());
+  card.hass = hass;
+  await tick();
+  requests[0].resolve({rows: [], columns: []});
+  subscriptions[0].reject(new Error('Temporary subscription failure'));
+  subscriptions.slice(1).forEach(item => item.resolve(() => unsubscribes.push(item)));
+  await tick();
+  assert.equal(card._unsubscribes.length, 3);
+  assert.equal(card._failedSubscriptions.size, 1);
+  assert.equal(timeouts.size, 1);
+  assert.equal([...timeouts.values()][0].delay, 60000);
+  for (let index = 0; index < 10; index++) card.hass = {...hass};
+  assert.equal(subscriptions.length, 4);
+  advanceTime(60000);
+  fireTimeouts();
+  assert.equal(subscriptions.length, 5);
+  assert.deepEqual(JSON.parse(JSON.stringify(subscriptions[4].message)), {type: 'subscribe_entities'});
+  subscriptions[4].resolve(() => unsubscribes.push(subscriptions[4]));
+  await tick();
+  assert.equal(card._unsubscribes.length, 4);
+  assert.equal(card._failedSubscriptions.size, 0);
+  subscriptions[4].callback({});
+  assert.equal([...timeouts.values()][0].delay, 250);
+  fireTimeouts();
+  assert.equal(requests.length, 2);
+  requests[1].resolve({rows: [], columns: []});
+  await tick();
+});
+
+test('disconnect cancels subscription retry and ignores late failures', async () => {
+  const {card, hass, requests, subscriptions, timeouts} = fixture();
+  card.setConfig(config());
+  card.hass = hass;
+  await tick();
+  requests[0].resolve({rows: [], columns: []});
+  subscriptions[0].reject(new Error('Temporary subscription failure'));
+  await tick();
+  assert.equal(timeouts.size, 1);
+  card.isConnected = false;
+  card.disconnectedCallback();
+  assert.equal(timeouts.size, 0);
+  subscriptions.slice(1).forEach(item => item.reject(new Error('Late failure')));
+  await tick();
+  assert.equal(timeouts.size, 0);
+  card.isConnected = true;
+  card.connectedCallback();
+  assert.equal(subscriptions.length, 8);
+  assert.equal(requests.length, 2);
+});
+
+test('same-connection reconnect recovers when reestablished subscription fails', async () => {
+  const {card, hass, requests, subscriptions, timeouts, fireTimeouts, advanceTime, unsubscribes,
+    connectionListeners, fireConnectionEvent} = fixture();
+  card.setConfig(config());
+  card.hass = hass;
+  await tick();
+  subscriptions.forEach(item => item.resolve(() => unsubscribes.push(item)));
+  await tick();
+  requests[0].resolve({rows: [], columns: []});
+  await tick();
+  assert(subscriptions.every(item => item.options?.resubscribe === false));
+  assert.equal(connectionListeners.ready.size, 1);
+  fireConnectionEvent('ready');
+  assert.equal(subscriptions.length, 8);
+  assert.equal(unsubscribes.length, 4);
+  assert.equal(connectionListeners.ready.size, 1);
+  subscriptions[4].reject(new Error('Reconnect subscription failure'));
+  subscriptions.slice(5).forEach(item => item.resolve(() => {}));
+  await tick();
+  assert.equal(card._failedSubscriptions.size, 1);
+  assert.deepEqual([...timeouts.values()].map(timer => timer.delay).sort((a, b) => a - b), [250, 60000]);
+  fireTimeouts();
+  assert.equal(requests.length, 2);
+  assert.equal(subscriptions.length, 8);
+  requests[1].resolve({rows: [], columns: []});
+  await tick();
+  advanceTime(60000);
+  fireTimeouts();
+  assert.equal(subscriptions.length, 9);
+  assert.deepEqual(JSON.parse(JSON.stringify(subscriptions[8].message)), {type: 'subscribe_entities'});
+  subscriptions[8].resolve(() => {});
+  await tick();
+  assert.equal(card._failedSubscriptions.size, 0);
+  subscriptions[8].callback({});
+  fireTimeouts();
+  assert.equal(requests.length, 3);
+  requests[2].resolve({rows: [], columns: []});
+  await tick();
+});
+
 test('events debounce bursts and follow device-history queries too', async () => {
   for (const deviceQuery of [false, true]) {
     const {card, hass, requests, subscriptions, timeouts, fireTimeouts} = fixture();
@@ -599,7 +696,7 @@ test('replacement connection cleans up subscriptions and discards in-flight resu
   await tick();
   subscriptions.forEach(item => item.resolve(() => unsubscribes.push(item)));
   await tick();
-  const nextHass = {...hass, connection: {subscribeMessage: hass.connection.subscribeMessage}};
+  const nextHass = {...hass, connection: {...hass.connection}};
   card.hass = nextHass;
   const oldSubscriptions = subscriptions.slice(0, 4);
   await tick();
