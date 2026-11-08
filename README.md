@@ -196,9 +196,9 @@ The card subscribes to Home Assistant's permission-filtered entity updates and e
 
 ### Binary sensor state colors
 
-Set `state_color: true` at the card level, alongside `query`, to color binary sensor `entity.state` cells. It defaults to `false` and accepts only a boolean. Other domains, columns, and device-query results keep their normal text color.
+Use independent card-level booleans to color binary sensors: `value_state_color: true` colors `entity.state` cells, and `icon_state_color: true` colors entity icons. Both default to `false`. Icon coloring requires `entity_icons: true`; value coloring does not. Other domains, columns, and device-query results keep their normal colors.
 
-Colors follow Home Assistant's theme fallback order: device class and state, binary sensor state, binary sensor active/inactive, then general active/inactive color. Custom themes can override these variables; for example, `state-binary_sensor-door-on-color` sets the open-door color. Unknown, unavailable, and missing states keep the normal text color.
+Colors follow Home Assistant's theme fallback order: device class and state, binary sensor state, binary sensor active/inactive, then general active/inactive color. Custom themes can override these variables; for example, `state-binary_sensor-door-on-color` sets the open-door color. Unknown, unavailable, and missing states keep the normal value and icon colors.
 
 By default, a door sensor displays `on` for open and `off` for closed. Colors use the same query snapshot as the text and update whenever the card refreshes. Device class metadata is included automatically, so it does not need to be selected as a column. Missing or malformed device classes fall back to the domain colors; `entity.device_class` is null for non-text values or strings longer than 64 characters.
 

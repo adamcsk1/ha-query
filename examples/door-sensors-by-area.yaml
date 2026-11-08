@@ -1,7 +1,8 @@
 type: custom:ha-query-card
 title: Door sensors
 group_by: area
-state_color: true
+value_state_color: true
+icon_state_color: true
 entity_links: true
 entity_icons: true
 entity_icon_overrides:

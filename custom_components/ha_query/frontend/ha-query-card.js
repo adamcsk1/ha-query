@@ -65,7 +65,7 @@ class HaQueryCard extends HTMLElement {
     if (config.group_by !== undefined && config.group_by !== 'area') {
       throw new Error('group_by must be area when specified');
     }
-    for (const option of ['state_color', 'entity_links', 'entity_icons']) {
+    for (const option of ['value_state_color', 'icon_state_color', 'entity_links', 'entity_icons']) {
       if (config[option] !== undefined && typeof config[option] !== 'boolean') {
         throw new Error(`${option} must be a boolean`);
       }
@@ -353,7 +353,7 @@ class HaQueryCard extends HTMLElement {
   }
   _stateColor(row) {
     const state = row['entity.state'];
-    if (!this._config.state_color || row.domain !== 'binary_sensor' || !['on', 'off'].includes(state)) return '';
+    if (row.domain !== 'binary_sensor' || !['on', 'off'].includes(state)) return '';
     const active = state === 'on' ? 'active' : 'inactive';
     // Match HA's state_color.ts fallback order without inserting arbitrary CSS.
     let color = `var(--state-binary_sensor-${state}-color, var(--state-binary_sensor-${active}-color, var(--state-${active}-color, var(--primary-text-color))))`;
@@ -400,7 +400,7 @@ class HaQueryCard extends HTMLElement {
       element.setAttribute('role', 'row');
       for (const column of columns) {
         const cell = this._cell(this._value(row, column), column, 'cell');
-        if (column === 'entity.state') cell.style.color = this._stateColor(row);
+        if (column === 'entity.state' && this._config.value_state_color) cell.style.color = this._stateColor(row);
         if (this._isEntityLink(row, column)) cell.replaceChildren(this._entityLink(row, cell.textContent));
         if (this._config.entity_icons && column === this._entityColumn()) {
           const icon = this._entityIcon(row);
@@ -438,6 +438,7 @@ class HaQueryCard extends HTMLElement {
     const icon = document.createElement('ha-state-icon');
     icon.hass = this._hass;
     icon.stateObj = states[row.entity_id];
+    if (this._config.icon_state_color) icon.style.color = this._stateColor(row);
     icon.setAttribute('aria-hidden', 'true');
     if (Object.hasOwn(this._config.entity_icon_overrides || {}, row.entity_id)) {
       icon.icon = this._config.entity_icon_overrides[row.entity_id];

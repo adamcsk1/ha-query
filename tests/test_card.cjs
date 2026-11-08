@@ -86,23 +86,25 @@ test('explicit device, state and unit columns show only Device and State', async
     .map(node => node.textContent), ['Window sensor 3', 'off']);
 });
 
-test('state_color accepts only booleans without disturbing valid configuration', () => {
-  const {card, intervals} = fixture();
-  card.setConfig({...config(), state_color: true});
-  const timer = [...intervals.keys()][0];
-  for (const state_color of ['true', 'false', 0, 1, null, [], {}]) {
-    assert.throws(() => card.setConfig({...config(), state_color}), /state_color/);
-    assert.equal(card._config.state_color, true);
-    assert.equal([...intervals.keys()][0], timer);
+test('state color options accept only booleans without disturbing valid configuration', () => {
+  for (const option of ['value_state_color', 'icon_state_color']) {
+    const {card, intervals} = fixture();
+    card.setConfig({...config(), [option]: true});
+    const timer = [...intervals.keys()][0];
+    for (const value of ['true', 'false', 0, 1, null, [], {}]) {
+      assert.throws(() => card.setConfig({...config(), [option]: value}), new RegExp(option));
+      assert.equal(card._config[option], true);
+      assert.equal([...intervals.keys()][0], timer);
+    }
+    card.setConfig({...config(), [option]: false});
+    assert.equal(card._config[option], false);
   }
-  card.setConfig({...config(), state_color: false});
-  assert.equal(card._config.state_color, false);
 });
 
 test('binary sensor state coloring is opt-in and uses HA theme fallback order', async () => {
-  for (const state_color of [undefined, false, true]) {
+  for (const value_state_color of [undefined, false, true]) {
     const {card, hass, requests} = fixture();
-    card.setConfig({...config(), state_color, group_by: 'area'});
+    card.setConfig({...config(), value_state_color, group_by: 'area'});
     card.hass = hass;
     requests[0].resolve({columns: ['entity.name', 'entity.state'], rows: ['on', 'off'].map(state => ({
       domain: 'binary_sensor', 'entity.device_class': 'door', 'entity.name': 'Door', 'entity.state': state,
@@ -113,9 +115,9 @@ test('binary sensor state coloring is opt-in and uses HA theme fallback order', 
     assert.deepEqual(cells.map(node => node.textContent), ['Door', 'on', 'Door', 'off']);
     assert.equal(cells[0].style.color, undefined);
     for (const [cell, state, active] of [[cells[1], 'on', 'active'], [cells[3], 'off', 'inactive']]) {
-      assert.equal(cell.style.color, state_color
+      assert.equal(cell.style.color, value_state_color
         ? `var(--state-binary_sensor-door-${state}-color, var(--state-binary_sensor-${state}-color, var(--state-binary_sensor-${active}-color, var(--state-${active}-color, var(--primary-text-color)))))`
-        : '');
+        : undefined);
     }
     assert(descendants(card).filter(node => node.getAttribute('role') === 'columnheader').every(node => !node.style.color));
   }
@@ -123,7 +125,7 @@ test('binary sensor state coloring is opt-in and uses HA theme fallback order', 
 
 test('coloring stays neutral for nonbinary and missing states and rejects CSS injection', async () => {
   const {card, hass, requests} = fixture();
-  card.setConfig({...config(), state_color: true});
+  card.setConfig({...config(), value_state_color: true});
   card.hass = hass;
   const rows = [
     ...['unknown', 'unavailable', null, undefined, true, 1, 'on);color:red'].map(state => ({domain: 'binary_sensor', 'entity.state': state})),
@@ -141,9 +143,40 @@ test('coloring stays neutral for nonbinary and missing states and rejects CSS in
     'var(--state-binary_sensor-on-color, var(--state-binary_sensor-active-color, var(--state-active-color, var(--primary-text-color))))'));
 });
 
+test('value and icon state colors are independent and use the query snapshot', async () => {
+  for (const value_state_color of [false, true]) {
+    for (const icon_state_color of [false, true]) {
+      const {card, hass, requests} = fixture();
+      hass.states = {
+        'binary_sensor.front_door': {entity_id: 'binary_sensor.front_door', state: 'off', attributes: {}},
+        'binary_sensor.unknown': {entity_id: 'binary_sensor.unknown', state: 'unknown', attributes: {}},
+      };
+      card.setConfig({...config(), entity_icons: true, value_state_color, icon_state_color,
+        entity_icon_overrides: {'binary_sensor.front_door': 'mdi:door-open'}});
+      card.hass = hass;
+      requests[0].resolve({columns: ['device.name', 'entity.state'], rows: [{
+        entity_id: 'binary_sensor.front_door', domain: 'binary_sensor', 'entity.device_class': 'door',
+        'device.name': 'Front door', 'entity.state': 'on',
+      }, {
+        entity_id: 'binary_sensor.unknown', domain: 'binary_sensor', 'device.name': 'Unknown', 'entity.state': 'unknown',
+      }]});
+      await tick();
+      const cells = descendants(card).filter(node => node.getAttribute('role') === 'cell' && node.dataset.label === 'State');
+      const icons = descendants(card).filter(node => node.tag === 'ha-state-icon');
+      const value = cells[0];
+      const icon = icons[0];
+      assert(!cells[1].style.color);
+      assert(!icons[1].style.color);
+      assert.equal(value.style.color?.includes('door-on') || false, value_state_color);
+      assert.equal(icon.style.color?.includes('door-on') || false, icon_state_color);
+      assert.equal(icon.icon, 'mdi:door-open');
+    }
+  }
+});
+
 test('refreshing state removes active color when sensor becomes unavailable', async () => {
   const {card, hass, requests, intervals} = fixture();
-  card.setConfig({...config(), state_color: true});
+  card.setConfig({...config(), value_state_color: true});
   card.hass = hass;
   requests[0].resolve({columns: ['entity.state', 'entity.unit'], rows: [
     {domain: 'binary_sensor', 'entity.state': 'on', 'entity.device_class': 'motion'},
@@ -322,7 +355,7 @@ test('display mappings customize binary states and exact entity names only', asy
 test('display mappings preserve state colors, link targets, and safe accessible text', async () => {
   const {card, hass, requests} = fixture();
   const entityId = 'binary_sensor.front_door';
-  card.setConfig({...config(), entity_links: true, state_color: true,
+  card.setConfig({...config(), entity_links: true, value_state_color: true,
     entity_names: {[entityId]: '<b>Front entrance</b>'}, state_labels: {on: '<i>Open</i>'}});
   card.hass = hass;
   requests[0].resolve({columns: ['entity.name', 'entity.state'], rows: [{
