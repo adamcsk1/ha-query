@@ -190,7 +190,7 @@ Responses are limited to 500 rows and 4 MB, including the WebSocket result envel
 
 Add `group_by: area` to the card configuration. Areas render as separate responsive panels; narrow cards use labeled rows without horizontal scrolling. State and unit columns display together, such as `95%`. The backend sorts and applies `limit` before grouping; `limit` defaults to 100. A warning appears when matching results are truncated.
 
-The card subscribes to Home Assistant's permission-filtered entity updates and entity/device/area registry changes through the existing WebSocket connection. These events trigger a query refresh for every query type, not only door sensors. Bursts are combined with a 250 ms delay, and an event arriving during a request schedules one trailing refresh. Disconnected cards stop subscriptions; reconnecting and HA-connection changes establish fresh subscriptions.
+The card subscribes to Home Assistant's permission-filtered entity updates and entity/device/area registry changes through the existing WebSocket connection. These events trigger a query refresh for every query type, not only door sensors. Bursts are combined with a 250 ms delay, and an event arriving during a request schedules one trailing refresh. Event-driven device history queries are limited to one per minute to avoid repeated Recorder reads. Disconnected cards stop subscriptions; reconnecting and HA-connection changes establish fresh subscriptions.
 
 `refresh_seconds` remains a periodic fallback for time-based history cutoffs, Recorder commits, missed events, and failed event subscriptions. It does not mean that ordinary state updates wait for the timer. The default interval is five minutes; set a number from 60 through 2,147,483 to change it.
 

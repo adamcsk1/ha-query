@@ -43,6 +43,7 @@ const CARD_STYLES = `
   }
 `;
 const EVENT_REFRESH_MS = 250;
+const HISTORY_EVENT_REFRESH_MS = 60_000;
 const REGISTRY_EVENTS = ['entity_registry_updated', 'device_registry_updated', 'area_registry_updated'];
 const FIELD_LABELS = {
   entity_id: 'Entity ID', 'entity.name': 'Entity', 'entity.state': 'State', 'entity.unit': 'Unit',
@@ -106,9 +107,15 @@ class HaQueryCard extends HTMLElement {
     this._fetch();
   }
   set hass(hass) {
-    const changed = this._hass !== hass;
+    const connectionChanged = this._hass?.connection !== hass?.connection;
     this._hass = hass;
-    if (changed) this._startSubscriptions();
+    if (connectionChanged) {
+      this._generation = (this._generation || 0) + 1;
+      this._stopSubscriptions();
+      this._stopEventTimer();
+      this._pendingRefresh = false;
+    }
+    this._startSubscriptions();
     if (!this._config || this._loading) return;
     if (Date.now() - this._lastRefresh >= this._refreshMs) this._fetch();
   }
@@ -128,33 +135,41 @@ class HaQueryCard extends HTMLElement {
     if (this._eventTimer) clearTimeout(this._eventTimer);
     this._eventTimer = null;
   }
+  _eventRefreshDelay() {
+    if (this._config.query.from !== 'devices' || !this._config.query.history) return 0;
+    return Math.max(0, HISTORY_EVENT_REFRESH_MS - (Date.now() - this._lastRefresh));
+  }
   _queueRefresh() {
     if (!this.isConnected || !this._config) return;
     this._pendingRefresh = true;
     if (this._eventTimer) return;
     this._eventTimer = setTimeout(() => {
       this._eventTimer = null;
+      if (this._eventRefreshDelay() > 0) {
+        this._queueRefresh();
+        return;
+      }
       if (!this._loading) this._pendingRefresh = false;
       this._fetch();
-    }, EVENT_REFRESH_MS);
+    }, Math.max(EVENT_REFRESH_MS, this._eventRefreshDelay()));
   }
   _stopSubscriptions() {
     for (const unsubscribe of this._unsubscribes || []) unsubscribe();
     this._unsubscribes = [];
-    this._subscriptionsHass = null;
+    this._subscriptionsConnection = null;
     this._subscriptionsStarting = false;
     this._subscriptionsGeneration = null;
   }
   _startSubscriptions() {
-    if (this._subscriptionsStarting || this._subscriptionsHass === this._hass
-        || !this._hass?.subscribeMessage || !this.isConnected || !this._config) return;
-    const hass = this._hass;
+    const connection = this._hass?.connection;
+    if (this._subscriptionsStarting || this._subscriptionsConnection === connection
+        || !connection?.subscribeMessage || !this.isConnected || !this._config) return;
     const generation = this._generation;
     this._subscriptionsStarting = true;
     this._subscriptionsGeneration = generation;
-    const active = () => this._subscriptionsHass === hass && this._subscriptionsGeneration === generation
-      && this.isConnected && this._hass === hass;
-    const subscribe = (message, callback) => hass.subscribeMessage(callback, message).then(unsubscribe => {
+    const active = () => this._subscriptionsConnection === connection && this._subscriptionsGeneration === generation
+      && this.isConnected && this._hass?.connection === connection;
+    const subscribe = (message, callback) => connection.subscribeMessage(callback, message).then(unsubscribe => {
       if (!active()) { unsubscribe(); return; }
       this._unsubscribes.push(unsubscribe);
     }).catch(error => {
@@ -164,7 +179,7 @@ class HaQueryCard extends HTMLElement {
     for (const event_type of REGISTRY_EVENTS) {
       subscribe({type: 'subscribe_events', event_type}, () => { if (active()) this._queueRefresh(); });
     }
-    this._subscriptionsHass = hass;
+    this._subscriptionsConnection = connection;
     this._subscriptionsStarting = false;
   }
   _stopTimer() {

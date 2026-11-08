@@ -13,6 +13,7 @@ function fixture() {
   const intervals = new Map();
   const timeouts = new Map();
   let nextId = 0;
+  let now = Date.now();
   let Card;
   class Element {
     constructor(tag = 'custom-card') {
@@ -33,6 +34,7 @@ function fixture() {
     document: {createElement: tag => new Element(tag)},
     customElements: {get: () => undefined, define: (name, cls) => { Card = cls; }},
     CustomEvent: class CustomEvent { constructor(type, options) { this.type = type; Object.assign(this, options); } },
+    Date: {now: () => now},
     window: {},
     setInterval: (callback, delay) => { intervals.set(++nextId, {callback, delay}); return nextId; },
     clearInterval: id => intervals.delete(id),
@@ -47,12 +49,15 @@ function fixture() {
   const unsubscribes = [];
   const hass = {
     callWS: message => new Promise((resolve, reject) => requests.push({message, resolve, reject})),
-    subscribeMessage: (callback, message) => {
-      return new Promise((resolve, reject) => subscriptions.push({callback, message, resolve, reject}));
+    connection: {
+      subscribeMessage: (callback, message) => {
+        return new Promise((resolve, reject) => subscriptions.push({callback, message, resolve, reject}));
+      },
     },
   };
   const fireTimeouts = () => { const pending = [...timeouts.values()]; timeouts.clear(); for (const timer of pending) timer.callback(); };
-  return {card, intervals, timeouts, fireTimeouts, requests, subscriptions, unsubscribes, hass};
+  const advanceTime = milliseconds => { now += milliseconds; };
+  return {card, intervals, timeouts, fireTimeouts, advanceTime, requests, subscriptions, unsubscribes, hass};
 }
 
 function descendants(node) {
@@ -365,9 +370,11 @@ test('entity queries subscribe to state and registry changes once connected', as
     {type: 'subscribe_events', event_type: 'area_registry_updated'},
   ]);
   subscriptions.forEach(item => item.resolve(() => {}));
+  await tick();
   assert.equal(requests[0].message.type, 'ha_query/run');
-  card.hass = hass;
+  for (let index = 0; index < 10; index++) card.hass = {...hass};
   assert.equal(subscriptions.length, 4);
+  assert.equal(card._unsubscribes.length, 4);
 });
 
 test('events debounce bursts and follow device-history queries too', async () => {
@@ -389,6 +396,37 @@ test('events debounce bursts and follow device-history queries too', async () =>
     requests[1].resolve({rows: [], columns: []});
     await tick();
   }
+});
+
+test('history events are rate limited and retain one trailing refresh', async () => {
+  const {card, hass, requests, subscriptions, timeouts, fireTimeouts, advanceTime} = fixture();
+  card.setConfig({query: {from: 'devices', where: {}, history: {}}});
+  card.hass = hass;
+  await tick();
+  subscriptions.forEach(item => item.resolve(() => {}));
+  await tick();
+  requests[0].resolve({rows: [], columns: []});
+  await tick();
+  for (const item of subscriptions) item.callback({});
+  assert.equal(requests.length, 1);
+  assert.equal(timeouts.size, 1);
+  assert.equal([...timeouts.values()][0].delay, 60000);
+  fireTimeouts();
+  assert.equal(requests.length, 1);
+  assert.equal(timeouts.size, 1);
+  advanceTime(60000);
+  fireTimeouts();
+  assert.equal(requests.length, 2);
+  subscriptions[0].callback({});
+  assert.equal(timeouts.size, 1);
+  requests[1].resolve({rows: [], columns: []});
+  await tick();
+  advanceTime(60000);
+  fireTimeouts();
+  assert.equal(requests.length, 3);
+  assert.equal(card._pendingRefresh, false);
+  requests[2].resolve({rows: [], columns: []});
+  await tick();
 });
 
 test('event during pending request queues one trailing refresh', async () => {
@@ -473,20 +511,29 @@ test('late subscriptions are cleaned after config change or disconnect', async (
   assert.equal(requests.length, requestsBefore);
 });
 
-test('obsolete connection callbacks cannot queue work on replacement', async () => {
-  const {card, hass, subscriptions, timeouts, requests} = fixture();
+test('replacement connection cleans up subscriptions and discards in-flight results', async () => {
+  const {card, hass, subscriptions, timeouts, requests, unsubscribes} = fixture();
   card.setConfig(config());
   card.hass = hass;
   await tick();
-  subscriptions.forEach(item => item.resolve(() => {}));
-  const nextHass = {...hass};
+  subscriptions.forEach(item => item.resolve(() => unsubscribes.push(item)));
+  await tick();
+  const nextHass = {...hass, connection: {subscribeMessage: hass.connection.subscribeMessage}};
   card.hass = nextHass;
   const oldSubscriptions = subscriptions.slice(0, 4);
   await tick();
+  assert.equal(unsubscribes.length, 4);
   for (const item of oldSubscriptions) item.callback({});
   assert.equal(timeouts.size, 0);
   assert.equal(requests.length, 1);
   assert.equal(subscriptions.length, 8);
+  requests[0].resolve({columns: ['entity.state'], rows: [{'entity.state': 'stale'}]});
+  await tick();
+  assert.equal(card._rows.length, 0);
+  assert.equal(requests.length, 2);
+  requests[1].resolve({columns: ['entity.state'], rows: [{'entity.state': 'current'}]});
+  await tick();
+  assert.equal(card._rows[0]['entity.state'], 'current');
 });
 
 test('refresh settings are finite, bounded numbers', () => {
