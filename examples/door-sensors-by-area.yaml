@@ -3,6 +3,9 @@ title: Door sensors
 group_by: area
 state_color: true
 entity_links: true
+entity_icons: true
+entity_icon_overrides:
+  binary_sensor.front_door: mdi:door-open # Replace with your exact entity IDs.
 entity_names:
   binary_sensor.front_door: Front entrance # Replace with your exact entity IDs.
 state_labels:

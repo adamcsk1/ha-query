@@ -29,6 +29,9 @@ const CARD_STYLES = `
     font: inherit; font-weight: inherit; text-align: inherit; overflow-wrap: anywhere; cursor: pointer; }
   .haq-entity-link:hover { text-decoration: underline; }
   .haq-entity-link:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
+  .haq-entity-content { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .haq-entity-content > :last-child { min-width: 0; }
+  .haq-entity-content > ha-state-icon { flex: none; color: var(--secondary-text-color); }
   .haq-cell:first-child { font-weight: 500; }
   @container (max-width: 440px) {
     .haq-grid { display: block; }
@@ -60,7 +63,7 @@ class HaQueryCard extends HTMLElement {
     if (config.group_by !== undefined && config.group_by !== 'area') {
       throw new Error('group_by must be area when specified');
     }
-    for (const option of ['state_color', 'entity_links']) {
+    for (const option of ['state_color', 'entity_links', 'entity_icons']) {
       if (config[option] !== undefined && typeof config[option] !== 'boolean') {
         throw new Error(`${option} must be a boolean`);
       }
@@ -74,6 +77,19 @@ class HaQueryCard extends HTMLElement {
         if (entityId.length > 255 || !/^[a-z0-9_]+\.[a-z0-9_]+$/.test(entityId)
             || /[\n\r\u2028\u2029]/.test(entityId) || typeof label !== 'string' || !label || label.length > 256) {
           throw new Error('entity_names requires valid entity IDs and nonempty labels of at most 256 characters');
+        }
+      }
+    }
+    if (config.entity_icon_overrides !== undefined) {
+      const overrides = config.entity_icon_overrides;
+      if (!overrides || typeof overrides !== 'object' || Array.isArray(overrides) || Object.keys(overrides).length > 500) {
+        throw new Error('entity_icon_overrides must be a mapping of at most 500 entity IDs to icons');
+      }
+      for (const [entityId, icon] of Object.entries(overrides)) {
+        if (entityId.length > 255 || !/^[a-z0-9_]+\.[a-z0-9_]+$/.test(entityId)
+            || /[\n\r\u2028\u2029]/.test(entityId) || typeof icon !== 'string' || icon.length > 128
+            || !/^[a-z][a-z0-9_]*:[a-z0-9_-]+$/.test(icon) || /[\n\r\u2028\u2029]/.test(icon)) {
+          throw new Error('entity_icon_overrides requires valid entity IDs and icon names such as mdi:door');
         }
       }
     }
@@ -336,6 +352,17 @@ class HaQueryCard extends HTMLElement {
         const cell = this._cell(this._value(row, column), column, 'cell');
         if (column === 'entity.state') cell.style.color = this._stateColor(row);
         if (this._isEntityLink(row, column)) cell.replaceChildren(this._entityLink(row, cell.textContent));
+        if (this._config.entity_icons && column === this._entityColumn()) {
+          const icon = this._entityIcon(row);
+          if (icon) {
+            const content = cell.children[0] || document.createElement('span');
+            if (!cell.children.length) content.textContent = cell.textContent;
+            const wrapper = document.createElement('div');
+            wrapper.className = 'haq-entity-content';
+            wrapper.append(icon, content);
+            cell.replaceChildren(wrapper);
+          }
+        }
         element.append(cell);
       }
       grid.append(element);
@@ -352,9 +379,23 @@ class HaQueryCard extends HTMLElement {
     cell.textContent = value;
     return cell;
   }
+  _entityColumn() {
+    return ['entity.name', 'device.name', 'entity_id'].find(field => this._columns.includes(field));
+  }
+  _entityIcon(row) {
+    const states = this._hass?.states;
+    if (!states || typeof row.entity_id !== 'string' || !Object.hasOwn(states, row.entity_id)) return null;
+    const icon = document.createElement('ha-state-icon');
+    icon.hass = this._hass;
+    icon.stateObj = states[row.entity_id];
+    icon.setAttribute('aria-hidden', 'true');
+    if (Object.hasOwn(this._config.entity_icon_overrides || {}, row.entity_id)) {
+      icon.icon = this._config.entity_icon_overrides[row.entity_id];
+    }
+    return icon;
+  }
   _isEntityLink(row, column) {
-    const linkColumn = ['entity.name', 'device.name', 'entity_id'].find(field => this._columns.includes(field));
-    return this._config.entity_links && column === linkColumn
+    return this._config.entity_links && column === this._entityColumn()
       && typeof row.entity_id === 'string' && row.entity_id.length <= 255
       && /^[a-z0-9_]+\.[a-z0-9_]+$/.test(row.entity_id)
       && !/[\n\r\u2028\u2029]/.test(row.entity_id);

@@ -220,6 +220,19 @@ state_labels:
 
 Both options are disabled when omitted and accept mappings, not arbitrary templates or HTML. All displayed values remain plain text.
 
+### Entity icons
+
+Set `entity_icons: true` at the card level to show Home Assistant's current entity icon beside the displayed entity field. The field follows the same priority as entity links: `entity.name`, then `device.name`, then `entity_id`. Device-query results and rows without a current entity state remain text-only. The option defaults to `false` and accepts only a boolean.
+
+Use `entity_icon_overrides` to replace icons for up to 500 exact entity IDs. Values are icon names such as `mdi:door` or `mdi:window-open`, with at most 128 characters. Overrides do not change entity metadata, filtering, sorting, or link targets.
+
+```yaml
+entity_icons: true
+entity_icon_overrides:
+  binary_sensor.front_door: mdi:door
+  binary_sensor.kitchen_window: mdi:window-closed
+```
+
 ### Entity links
 
 Set `entity_links: true` at the card level, alongside `query`, to make one displayed entity field clickable per row. Link priority is `entity.name`, then `device.name`, then `entity_id`. Only the highest-priority selected field becomes a button; the other fields remain plain text. Device names therefore work without adding an extra name or ID UI column.

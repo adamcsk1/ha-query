@@ -358,6 +358,87 @@ test('display mappings validate shape, keys, values, and bounds atomically', () 
   card.setConfig({...config(), entity_names: {}, state_labels: {}});
 });
 
+test('entity icons are opt-in and use live HA states with exact ID overrides', async () => {
+  const {card, hass, requests, intervals} = fixture();
+  const front = {entity_id: 'binary_sensor.front_door', state: 'on', attributes: {device_class: 'door', icon: 'mdi:door'}};
+  const back = {entity_id: 'binary_sensor.back_door', state: 'off', attributes: {device_class: 'door'}};
+  hass.states = {'binary_sensor.front_door': front, 'binary_sensor.back_door': back};
+  const overrides = {'binary_sensor.front_door': 'mdi:door-open', 'binary_sensor.other': 'mdi:window-open'};
+  const rows = [
+    {entity_id: 'binary_sensor.front_door', 'device.name': 'Front door', 'entity.state': 'on'},
+    {entity_id: 'binary_sensor.back_door', 'device.name': 'Back door', 'entity.state': 'off'},
+    {entity_id: 'binary_sensor.missing', 'device.name': 'Missing state', 'entity.state': 'off'},
+  ];
+  const response = {columns: ['device.name', 'entity.state'], rows};
+  card.setConfig({...config(), entity_links: true, entity_icon_overrides: overrides});
+  card.hass = hass;
+  requests[0].resolve(response);
+  await tick();
+  assert.equal(descendants(card).filter(node => node.tag === 'ha-state-icon').length, 0);
+  card.setConfig({...config(), entity_icons: true, entity_links: true, entity_icon_overrides: overrides});
+  requests[1].resolve(response);
+  await tick();
+  const icons = descendants(card).filter(node => node.tag === 'ha-state-icon');
+  assert.equal(icons.length, 2);
+  assert.equal(icons[0].stateObj, front);
+  assert.equal(icons[0].icon, 'mdi:door-open');
+  assert.equal(icons[1].stateObj, back);
+  assert.equal(icons[1].icon, undefined);
+  assert(icons.every(icon => icon.hass === hass && icon.getAttribute('aria-hidden') === 'true'));
+  assert(icons.every(icon => icon.children.length === 0));
+  assert.equal(descendants(card).filter(node => node.className === 'haq-entity-content').length, 2);
+  assert.equal(descendants(card).filter(node => node.tag === 'button').length, 3);
+  const replacement = {...front, state: 'off'};
+  hass.states['binary_sensor.front_door'] = replacement;
+  [...intervals.values()][0].callback();
+  requests[2].resolve(response);
+  await tick();
+  assert.equal(descendants(card).find(node => node.tag === 'ha-state-icon').stateObj, replacement);
+  card.setConfig({...config(), entity_icons: false, entity_icon_overrides: overrides});
+  assert.equal(descendants(card).filter(node => node.tag === 'ha-state-icon').length, 0);
+});
+
+test('entity icons preserve plain text without enabling links', async () => {
+  const {card, hass, requests} = fixture();
+  const stateObj = {entity_id: 'binary_sensor.front_door', state: 'on', attributes: {device_class: 'door'}};
+  hass.states = {'binary_sensor.front_door': stateObj};
+  card.setConfig({...config(), entity_icons: true});
+  card.hass = hass;
+  requests[0].resolve({columns: ['entity.name'], rows: [{
+    entity_id: 'binary_sensor.front_door', 'entity.name': 'Front door', 'entity.state': 'on',
+  }]});
+  await tick();
+  const content = descendants(card).find(node => node.className === 'haq-entity-content');
+  assert.equal(content.children[0].tag, 'ha-state-icon');
+  assert.equal(content.children[0].stateObj, stateObj);
+  assert.equal(content.children[1].textContent, 'Front door');
+  assert.equal(descendants(card).filter(node => node.tag === 'button').length, 0);
+});
+
+test('entity icon options validate booleans, mappings, names, and bounds atomically', () => {
+  const invalid = [
+    ...['true', 0, null, [], {}].map(entity_icons => ({entity_icons})),
+    {entity_icon_overrides: null}, {entity_icon_overrides: []}, {entity_icon_overrides: 'mdi:door'},
+    {entity_icon_overrides: {sensor: 'mdi:door'}}, {entity_icon_overrides: {'sensor.valid': ''}},
+    {entity_icon_overrides: {'sensor.valid': 1}}, {entity_icon_overrides: {'sensor.valid': 'mdi:door\n'}},
+    {entity_icon_overrides: {'sensor.valid': 'https://evil.example'}},
+    {entity_icon_overrides: {'sensor.valid': 'mdi:' + 'x'.repeat(125)}},
+  ];
+  for (const options of invalid) {
+    const {card, intervals} = fixture();
+    card.setConfig({...config(), entity_icons: true, entity_icon_overrides: {'sensor.valid': 'mdi:door'}});
+    const timer = [...intervals.keys()][0];
+    assert.throws(() => card.setConfig({...config(), ...options}));
+    assert.equal(card._config.entity_icons, true);
+    assert.equal(card._config.entity_icon_overrides['sensor.valid'], 'mdi:door');
+    assert.equal([...intervals.keys()][0], timer);
+  }
+  const {card} = fixture();
+  const manyIcons = Object.fromEntries(Array.from({length: 501}, (_, i) => [`sensor.e${i}`, 'mdi:door']));
+  assert.throws(() => card.setConfig({...config(), entity_icon_overrides: manyIcons}), /500/);
+  card.setConfig({...config(), entity_icons: false, entity_icon_overrides: {'sensor.valid': 'hass:custom-icon'}});
+});
+
 test('entity queries subscribe to state and registry changes once connected', async () => {
   const {card, hass, requests, subscriptions} = fixture();
   card.setConfig(config());
