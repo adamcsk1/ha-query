@@ -17,7 +17,8 @@ function fixture() {
   let Card;
   class Element {
     constructor(tag = 'custom-card') {
-      this.tag = tag; this.children = []; this.style = {}; this.dataset = {}; this.attributes = {};
+      this.tag = tag; this.children = []; this.style = {setProperty(name, value) { this[name] = value; }};
+      this.dataset = {}; this.attributes = {};
       this.listeners = {}; this.events = [];
       this.classList = {add: (...names) => { this.className = `${this.className || ''} ${names.join(' ')}`.trim(); }};
     }
@@ -72,6 +73,102 @@ function descendants(node) {
 function resultCells(node) {
   return descendants(node).filter(element => (element.className || '').split(' ').includes('haq-cell'));
 }
+
+test('tile grid options reject malformed input without replacing valid configuration', () => {
+  const invalid = [null, [], '6', 6, true, {width: 6}, {columns: 6, row: 1}];
+  for (const key of ['columns', 'rows']) {
+    for (const value of [0, -1, 13, 1.5, '6', true, null, undefined, NaN, Infinity, {}, []]) {
+      invalid.push({[key]: value});
+    }
+  }
+  const {card, intervals} = fixture();
+  const options = {columns: 6, rows: 2};
+  card.setConfig({...config(), tile_grid_options: options});
+  const timer = [...intervals.keys()][0];
+  for (const tile_grid_options of invalid) {
+    assert.throws(() => card.setConfig({...config(), tile_grid_options}), /tile_grid_options/);
+    assert.equal(card._config.tile_grid_options, options);
+    assert.equal([...intervals.keys()][0], timer);
+  }
+  for (const tile_grid_options of [{}, {columns: 1}, {columns: 12}, {rows: 1}, {rows: 12}]) {
+    card.setConfig({...config(), tile_grid_options});
+    assert.equal(card._config.tile_grid_options, tile_grid_options);
+  }
+});
+
+test('shared tile sizing applies to every group and ungrouped results', async () => {
+  for (const group_by of [undefined, 'area']) {
+    for (const columns of [1, 4, 6, 12]) {
+      const {card, hass, requests} = fixture();
+      card.setConfig({...config(), group_by, tile_grid_options: {columns, rows: 2}, grid_options: {columns: 12}});
+      card.hass = hass;
+      requests[0].resolve({columns: ['entity.name', 'entity.state'], rows: [
+        {'area.id': 'kitchen', 'area.name': 'Kitchen', 'entity.name': 'Kitchen', 'entity.state': '20'},
+        {'area.id': 'office', 'area.name': 'Office', 'entity.name': 'Office', 'entity.state': '21'},
+      ]});
+      await tick();
+      const grids = descendants(card).filter(node => (node.className || '').includes('haq-grid-sized'));
+      assert.equal(grids.length, group_by ? 2 : 1);
+      assert(grids.every(grid => grid.style['--haq-tile-columns'] === String(columns)));
+      const tiles = descendants(card).filter(node => node.className === 'haq-tile');
+      assert.equal(tiles.length, 2);
+      assert(tiles.every(tile => tile.style.minHeight === '152px'));
+      assert.deepEqual(resultCells(card).map(cell => cell.textContent), ['Kitchen', '20', 'Office', '21']);
+      const styles = descendants(card).find(node => node.tag === 'style').textContent;
+      assert(styles.includes('.haq-content { min-width: 0; container-type: inline-size; }'));
+      assert(styles.includes('.haq-grid-sized { grid-template-columns: repeat(12, minmax(0, 1fr)); }'));
+      assert(styles.includes('grid-column: span var(--haq-tile-columns)'));
+      assert(styles.includes('@container (max-width: 560px)'));
+      assert(styles.includes('.haq-grid-sized > .haq-tile { grid-column: 1 / -1; }'));
+    }
+  }
+});
+
+test('omitted tile sizing preserves automatic layout and config changes remove old sizing', async () => {
+  const {card, hass, requests} = fixture();
+  card.hass = hass;
+  for (const tile_grid_options of [{columns: 12, rows: 12}, {rows: 1}, {columns: 4}, {}, undefined]) {
+    card.setConfig({...config(), tile_grid_options});
+    requests.at(-1).resolve({columns: ['entity.name'], rows: [{'entity.name': 'Long name and extra content'}]});
+    await tick();
+    const grid = descendants(card).find(node => (node.className || '').split(' ').includes('haq-grid'));
+    const tile = descendants(card).find(node => node.className === 'haq-tile');
+    assert.equal(grid.className.includes('haq-grid-sized'), tile_grid_options?.columns !== undefined);
+    assert.equal(grid.style['--haq-tile-columns'], tile_grid_options?.columns === undefined ? undefined : String(tile_grid_options.columns));
+    assert.equal(tile.style.minHeight, tile_grid_options?.rows === undefined ? undefined
+      : `${70 * tile_grid_options.rows + 12 * (tile_grid_options.rows - 1)}px`);
+  }
+});
+
+test('Masonry sizing accounts for tile height, spans, groups and narrow cards', async () => {
+  const {card, hass, requests} = fixture();
+  card.hass = hass;
+  card.clientWidth = 900;
+  const load = async (tile_grid_options, group_by) => {
+    card.setConfig({...config(), tile_grid_options, group_by});
+    requests.at(-1).resolve({columns: ['entity.name'], rows: [
+      {'entity.name': 'One', 'area.id': 'one', 'area.name': 'One'},
+      {'entity.name': 'Two', 'area.id': 'two', 'area.name': 'Two'},
+      {'entity.name': 'Three', 'area.id': 'two', 'area.name': 'Two'},
+    ]});
+    await tick();
+    return card.getCardSize();
+  };
+  const standard = await load({columns: 12, rows: 1});
+  const tall = await load({columns: 12, rows: 12});
+  assert(tall > standard);
+  assert(tall >= Math.ceil(3 * 972 / 50));
+  const half = await load({columns: 6, rows: 1});
+  assert(half < standard);
+  const grouped = await load({columns: 6, rows: 1}, 'area');
+  assert(grouped > half);
+  card.clientWidth = 400;
+  assert(card.getCardSize() > grouped);
+  card.clientWidth = 900;
+  const auto = await load({rows: 2});
+  card.clientWidth = 400;
+  assert(card.getCardSize() > auto);
+});
 
 test('explicit device, state and unit columns render one name and state tile', async () => {
   const {card, hass, requests} = fixture();
@@ -1016,7 +1113,7 @@ test('responsive CSS uses auto-fitting tiles and labels extra fields', async () 
   assert(!styles.includes('background: var(--secondary-background-color)'));
   assert(styles.includes('content: attr(data-label)'));
   assert(styles.includes('overflow-wrap: anywhere'));
-  assert(!styles.includes('@container'));
+  assert(styles.includes('@container (max-width: 560px)'));
   const cells = resultCells(card);
   assert.deepEqual(cells.map(node => node.dataset.label), ['Entity', 'Device']);
   assert(cells[0].className.includes('haq-primary'));

@@ -1,6 +1,9 @@
 type: custom:ha-query-card
 title: Battery levels by area
 group_by: area
+tile_grid_options:
+  columns: 6
+  rows: 1
 refresh_seconds: 300
 query:
   from: entities

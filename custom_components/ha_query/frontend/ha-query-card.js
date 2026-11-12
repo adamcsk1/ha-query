@@ -1,7 +1,7 @@
 /* HA Query Lovelace card. No third-party JS dependencies. */
 const CARD_STYLES = `
   :host { display: block; }
-  .haq-content { min-width: 0; }
+  .haq-content { min-width: 0; container-type: inline-size; }
   .haq-title { margin: 0 0 12px; font-size: 1.25rem; line-height: 1.4; font-weight: 400; }
   .haq-notice { margin: 0 0 12px; }
   .haq-warning { color: var(--warning-color, #b8860b); }
@@ -13,6 +13,11 @@ const CARD_STYLES = `
     font-size: 1rem; line-height: 1.5; font-weight: 500; }
   .haq-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
     gap: 12px; min-width: 0; }
+  .haq-grid-sized { grid-template-columns: repeat(12, minmax(0, 1fr)); }
+  .haq-grid-sized > .haq-tile { grid-column: span var(--haq-tile-columns); }
+  @container (max-width: 560px) {
+    .haq-grid-sized > .haq-tile { grid-column: 1 / -1; }
+  }
   .haq-tile { display: flex; align-items: center; gap: 12px; min-width: 0; min-height: 70px;
     box-sizing: border-box; padding: 12px 16px; overflow: hidden;
     border: var(--ha-card-border-width, 1px) solid var(--ha-card-border-color, var(--divider-color));
@@ -48,6 +53,18 @@ class HaQueryCard extends HTMLElement {
     }
     if (config.group_by !== undefined && config.group_by !== 'area') {
       throw new Error('group_by must be area when specified');
+    }
+    if (config.tile_grid_options !== undefined) {
+      const options = config.tile_grid_options;
+      if (!options || typeof options !== 'object' || Array.isArray(options)
+          || Object.keys(options).some(key => !['columns', 'rows'].includes(key))) {
+        throw new Error('tile_grid_options must be a mapping containing only columns and rows');
+      }
+      for (const key of ['columns', 'rows']) {
+        if (Object.hasOwn(options, key) && (!Number.isInteger(options[key]) || options[key] < 1 || options[key] > 12)) {
+          throw new Error(`tile_grid_options.${key} must be an integer between 1 and 12`);
+        }
+      }
     }
     for (const option of ['value_state_color', 'icon_state_color', 'entity_links', 'entity_icons']) {
       if (config[option] !== undefined && typeof config[option] !== 'boolean') {
@@ -367,12 +384,19 @@ class HaQueryCard extends HTMLElement {
   _renderGrid(group) {
     const grid = document.createElement('div');
     grid.className = 'haq-grid';
+    const columns = this._config.tile_grid_options?.columns;
+    if (columns !== undefined) {
+      grid.classList.add('haq-grid-sized');
+      grid.style.setProperty('--haq-tile-columns', String(columns));
+    }
     for (const row of group.rows) grid.append(this._renderTile(row));
     return grid;
   }
   _renderTile(row) {
     const tile = document.createElement('div');
     tile.className = 'haq-tile';
+    const rows = this._config.tile_grid_options?.rows;
+    if (rows !== undefined) tile.style.minHeight = `${70 * rows + 12 * (rows - 1)}px`;
     const entityColumn = this._entityColumn();
     if (this._config.entity_icons && entityColumn) {
       const icon = this._entityIcon(row);
@@ -445,6 +469,15 @@ class HaQueryCard extends HTMLElement {
   }
   getCardSize() {
     const headings = this._config?.group_by === 'area' ? this._groups().length : 0;
+    const options = this._config?.tile_grid_options;
+    if (options?.columns !== undefined || options?.rows !== undefined) {
+      const width = this.clientWidth || 0;
+      const perRow = options.columns === undefined ? Math.max(1, Math.floor((width + 12) / 292))
+        : width <= 560 ? 1 : Math.floor(12 / options.columns);
+      const tileRows = this._groups().reduce((count, group) => count + Math.ceil(group.rows.length / perRow), 0);
+      const height = tileRows * 82 * (options.rows ?? 1) + headings * 32 + (this._config.title ? 40 : 0);
+      return Math.max(2, Math.ceil(height / 50));
+    }
     return Math.max(2, Math.ceil(((this._rows?.length || 0) + headings + 2) / 2));
   }
 }

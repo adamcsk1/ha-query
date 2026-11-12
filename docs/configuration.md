@@ -10,6 +10,7 @@ Card options sit beside `type`. Query options sit inside `query`. See [Query lan
 | `title` | string | omitted | Optional compact card heading |
 | `query` | mapping | required | Query source, filters, columns, sorting, and limits |
 | `group_by` | string | omitted | Set to `area` to group result tiles under area headings |
+| `tile_grid_options` | mapping | omitted | Shared tile width (`columns`) and minimum height (`rows`) in every group |
 | `refresh_seconds` | number | `300` | Periodic refresh fallback, from 60 through 2,147,483 seconds |
 | `entity_links` | boolean | `false` | Make the displayed entity field open More Information |
 | `entity_icons` | boolean | `false` | Show the current Home Assistant entity icon |
@@ -33,6 +34,22 @@ These options belong inside `query`:
 | `parse_state` | boolean | `false` | Parse numbers and units embedded in entity states |
 
 An explicit column list replaces all default UI columns. Each result renders as a tile: the highest-priority selected entity field supplies the name, state and unit share the value line, and other selected fields have compact labels. Metadata used for grouping, links, icons, and colors does not create extra fields.
+
+## Tile grid sizing
+
+Use one `tile_grid_options` mapping beside `query` to size every result tile in every area group (or the single ungrouped grid):
+
+```yaml
+tile_grid_options:
+  columns: 6
+  rows: 1
+```
+
+Both keys are optional integers from 1 through 12. `columns` uses a 12-column internal grid: `12` gives one tile per row, `6` gives two, and `4` gives three. Other spans leave unused space at the end of a row when they do not divide 12 evenly. At card widths of 560px or less, tiles become full-width for readability.
+
+`rows: 1` sets a 70px minimum height; each extra row adds 82px (70px plus the 12px gap). Content can expand tiles rather than being clipped. Omitted `columns` keeps automatic widths; omitted `rows` keeps the standard minimum height. An empty mapping keeps both defaults.
+
+These settings mirror HA's sizing pattern, not its dashboard layout engine. HA's top-level `grid_options` still controls the **whole custom card** in a Sections dashboard; `tile_grid_options` controls only the **results inside it**.
 
 ## Grouping and updates
 
