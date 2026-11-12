@@ -118,7 +118,7 @@ test('shared tile sizing applies to every group and ungrouped results', async ()
       assert(styles.includes('.haq-content { min-width: 0; container-type: inline-size; }'));
       assert(styles.includes('.haq-grid-sized { grid-template-columns: repeat(12, minmax(0, 1fr)); }'));
       assert(styles.includes('grid-column: span var(--haq-tile-columns)'));
-      assert(styles.includes('@container (max-width: 560px)'));
+      assert(styles.includes('@container (max-width: 320px)'));
       assert(styles.includes('.haq-grid-sized > .haq-tile { grid-column: 1 / -1; }'));
     }
   }
@@ -162,7 +162,13 @@ test('Masonry sizing accounts for tile height, spans, groups and narrow cards', 
   assert(half < standard);
   const grouped = await load({columns: 6, rows: 1}, 'area');
   assert(grouped > half);
-  card.clientWidth = 400;
+  for (const width of [560, 400, 360, 321]) {
+    card.clientWidth = width;
+    assert.equal(card.getCardSize(), grouped, `two columns at ${width}px`);
+  }
+  card.clientWidth = 320;
+  assert(card.getCardSize() > grouped);
+  card.clientWidth = 280;
   assert(card.getCardSize() > grouped);
   card.clientWidth = 900;
   const auto = await load({rows: 2});
@@ -1113,7 +1119,7 @@ test('responsive CSS uses auto-fitting tiles and labels extra fields', async () 
   assert(!styles.includes('background: var(--secondary-background-color)'));
   assert(styles.includes('content: attr(data-label)'));
   assert(styles.includes('overflow-wrap: anywhere'));
-  assert(styles.includes('@container (max-width: 560px)'));
+  assert(styles.includes('@container (max-width: 320px)'));
   const cells = resultCells(card);
   assert.deepEqual(cells.map(node => node.dataset.label), ['Entity', 'Device']);
   assert(cells[0].className.includes('haq-primary'));

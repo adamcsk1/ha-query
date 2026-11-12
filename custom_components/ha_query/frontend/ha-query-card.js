@@ -15,7 +15,7 @@ const CARD_STYLES = `
     gap: 12px; min-width: 0; }
   .haq-grid-sized { grid-template-columns: repeat(12, minmax(0, 1fr)); }
   .haq-grid-sized > .haq-tile { grid-column: span var(--haq-tile-columns); }
-  @container (max-width: 560px) {
+  @container (max-width: 320px) {
     .haq-grid-sized > .haq-tile { grid-column: 1 / -1; }
   }
   .haq-tile { display: flex; align-items: center; gap: 12px; min-width: 0; min-height: 70px;
@@ -473,7 +473,7 @@ class HaQueryCard extends HTMLElement {
     if (options?.columns !== undefined || options?.rows !== undefined) {
       const width = this.clientWidth || 0;
       const perRow = options.columns === undefined ? Math.max(1, Math.floor((width + 12) / 292))
-        : width <= 560 ? 1 : Math.floor(12 / options.columns);
+        : width <= 320 ? 1 : Math.floor(12 / options.columns);
       const tileRows = this._groups().reduce((count, group) => count + Math.ceil(group.rows.length / perRow), 0);
       const height = tileRows * 82 * (options.rows ?? 1) + headings * 32 + (this._config.title ? 40 : 0);
       return Math.max(2, Math.ceil(height / 50));

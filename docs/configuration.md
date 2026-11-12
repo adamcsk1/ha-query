@@ -45,7 +45,7 @@ tile_grid_options:
   rows: 1
 ```
 
-Both keys are optional integers from 1 through 12. `columns` uses a 12-column internal grid: `12` gives one tile per row, `6` gives two, and `4` gives three. Other spans leave unused space at the end of a row when they do not divide 12 evenly. At card widths of 560px or less, tiles become full-width for readability.
+Both keys are optional integers from 1 through 12. `columns` uses a 12-column internal grid: `12` gives one tile per row, `6` gives two, and `4` gives three. Other spans leave unused space at the end of a row when they do not divide 12 evenly. Explicit spans stay in effect at normal HA card widths, including 360–560px. Only at card widths of 320px or less do tiles become full-width for readability.
 
 `rows: 1` sets a 70px minimum height; each extra row adds 82px (70px plus the 12px gap). Content can expand tiles rather than being clipped. Omitted `columns` keeps automatic widths; omitted `rows` keeps the standard minimum height. An empty mapping keeps both defaults.
 

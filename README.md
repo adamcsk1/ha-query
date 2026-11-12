@@ -59,7 +59,7 @@ query:
 
 This shows battery sensor tiles under area headings, sorted by charge. Device names open Home Assistant's More Information dialog.
 
-To size every result tile, add `tile_grid_options: {columns: 12, rows: 1}` beside `query`. Use `columns: 6` for two tiles per row on wider cards; narrow cards use full-width tiles. See [tile grid sizing](docs/configuration.md#tile-grid-sizing) for details.
+To size every result tile, add `tile_grid_options: {columns: 12, rows: 1}` beside `query`. Use `columns: 6` for two tiles per row; cards 320px wide or narrower use full-width tiles. See [tile grid sizing](docs/configuration.md#tile-grid-sizing) for details.
 
 ## Documentation
 
