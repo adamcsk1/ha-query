@@ -1,50 +1,34 @@
 /* HA Query Lovelace card. No third-party JS dependencies. */
 const CARD_STYLES = `
   :host { display: block; }
-  .haq-card { container-type: inline-size; }
-  .haq-content { padding: 16px; }
-  .haq-title { margin: 0 0 16px; font-size: 1.5rem; line-height: 1.333; letter-spacing: -.01em; font-weight: 400; }
-  .haq-notice { margin: 0 0 12px; padding: 10px 12px; border-radius: var(--ha-card-border-radius, 8px);
-    background: var(--secondary-background-color); }
+  .haq-content { min-width: 0; }
+  .haq-title { margin: 0 0 12px; font-size: 1.25rem; line-height: 1.4; font-weight: 400; }
+  .haq-notice { margin: 0 0 12px; }
   .haq-warning { color: var(--warning-color, #b8860b); }
   .haq-error { color: var(--error-color); }
   .haq-empty { margin: 0; color: var(--secondary-text-color); }
-  .haq-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
-    gap: 16px; align-items: start; }
-  .haq-group { min-width: 0; overflow: hidden;
+  .haq-groups { display: grid; gap: 20px; }
+  .haq-group { min-width: 0; }
+  .haq-area-title { min-width: 0; margin: 0 0 8px; overflow-wrap: anywhere;
+    font-size: 1rem; line-height: 1.5; font-weight: 500; }
+  .haq-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+    gap: 12px; min-width: 0; }
+  .haq-tile { display: flex; align-items: center; gap: 12px; min-width: 0; min-height: 70px;
+    box-sizing: border-box; padding: 12px 16px; overflow: hidden;
     border: var(--ha-card-border-width, 1px) solid var(--ha-card-border-color, var(--divider-color));
     border-radius: var(--ha-card-border-radius, 12px); background: var(--card-background-color); }
-  .haq-area-header { display: flex; align-items: center; justify-content: space-between; gap: 12px;
-    padding: 12px 16px; }
-  .haq-area-title { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 1rem; line-height: 1.5; font-weight: 500; }
-  .haq-count { flex: none; padding: 2px 8px; border-radius: 999px;
-    background: var(--secondary-background-color); color: var(--secondary-text-color); font-size: .8rem; }
-  .haq-grid { display: grid; min-width: 0; }
-  .haq-grid-header, .haq-row { display: contents; }
-  .haq-cell { min-width: 0; padding: 12px 16px; border-top: 1px solid var(--divider-color);
-    overflow-wrap: anywhere; color: var(--primary-text-color); }
-  .haq-column-header { padding-top: 10px; padding-bottom: 10px; color: var(--secondary-text-color);
-    background: var(--card-background-color); font-size: .75rem; font-weight: 500; letter-spacing: .02em; }
-  .haq-value-cell { text-align: right; font-variant-numeric: tabular-nums; }
+  .haq-tile > ha-state-icon { flex: none; width: 24px; height: 24px;
+    color: var(--state-icon-color, var(--secondary-text-color)); }
+  .haq-tile-content { display: grid; gap: 2px; min-width: 0; }
+  .haq-cell { min-width: 0; overflow-wrap: anywhere; color: var(--primary-text-color); line-height: 1.4; }
+  .haq-primary { font-weight: 500; }
+  .haq-value-cell { font-variant-numeric: tabular-nums; }
+  .haq-detail { font-size: .875rem; }
+  .haq-detail::before { content: attr(data-label) ": "; color: var(--secondary-text-color); }
   .haq-entity-link { padding: 0; border: 0; background: none; color: inherit;
     font: inherit; font-weight: inherit; text-align: inherit; overflow-wrap: anywhere; cursor: pointer; }
   .haq-entity-link:hover { color: var(--primary-color); }
   .haq-entity-link:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
-  .haq-entity-content { display: flex; align-items: center; gap: 8px; min-width: 0; }
-  .haq-entity-content > :last-child { min-width: 0; }
-  .haq-entity-content > ha-state-icon { flex: none; color: var(--state-icon-color, var(--secondary-text-color)); }
-  .haq-cell:first-child { font-weight: 500; }
-  @container (max-width: 440px) {
-    .haq-grid { display: block; }
-    .haq-grid-header { display: none; }
-    .haq-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 8px 12px; padding: 12px; border-top: 1px solid var(--divider-color); }
-    .haq-cell { display: flex; flex-direction: column; gap: 2px; padding: 0; border: 0; text-align: left; }
-    .haq-cell::before { content: attr(data-label); color: var(--secondary-text-color);
-      font-size: .7rem; font-weight: 500; }
-    .haq-cell:first-child { grid-column: 1 / -1; font-size: 1rem; font-weight: 600; }
-    .haq-cell:first-child::before { display: none; }
-  }
 `;
 const EVENT_REFRESH_MS = 250;
 const HISTORY_EVENT_REFRESH_MS = 60_000;
@@ -283,14 +267,16 @@ class HaQueryCard extends HTMLElement {
     this.replaceChildren();
     const style = document.createElement('style');
     style.textContent = CARD_STYLES;
-    const card = document.createElement('ha-card');
+    const card = document.createElement('div');
     card.className = 'haq-card';
     const container = document.createElement('div');
     container.className = 'haq-content';
-    const title = document.createElement('h3');
-    title.className = 'haq-title';
-    title.textContent = this._config.title || 'HA Query';
-    container.append(title);
+    if (this._config.title) {
+      const title = document.createElement('h3');
+      title.className = 'haq-title';
+      title.textContent = this._config.title;
+      container.append(title);
+    }
     for (const warning of this._warnings || []) {
       container.append(this._notice(warning, 'haq-warning'));
     }
@@ -330,7 +316,9 @@ class HaQueryCard extends HTMLElement {
     });
   }
   _displayColumns() {
-    return (this._columns || []).filter(column => column !== 'entity.unit' || !this._columns.includes('entity.state'));
+    const columns = (this._columns || []).filter(column => column !== 'entity.unit' || !this._columns.includes('entity.state'));
+    const ordered = [this._entityColumn(), 'entity.state', ...columns];
+    return [...new Set(ordered.filter(column => columns.includes(column)))];
   }
   _label(column) {
     return FIELD_LABELS[column] || column.split('.').at(-1).replaceAll('_', ' ');
@@ -368,63 +356,45 @@ class HaQueryCard extends HTMLElement {
     section.className = 'haq-group';
     section.setAttribute('aria-label', group.name);
     if (this._config.group_by === 'area') {
-      const header = document.createElement('div');
-      header.className = 'haq-area-header';
       const heading = document.createElement('h4');
       heading.className = 'haq-area-title';
       heading.textContent = group.name;
-      const count = document.createElement('span');
-      count.className = 'haq-count';
-      count.textContent = String(group.rows.length);
-      count.setAttribute('aria-label', `${group.rows.length} results`);
-      header.append(heading, count); section.append(header);
+      section.append(heading);
     }
     section.append(this._renderGrid(group));
     return section;
   }
   _renderGrid(group) {
-    const columns = this._displayColumns();
     const grid = document.createElement('div');
     grid.className = 'haq-grid';
-    grid.setAttribute('role', 'table');
-    grid.setAttribute('aria-label', `${group.name} results`);
-    grid.style.gridTemplateColumns = `repeat(${columns.length}, minmax(0, 1fr))`;
-    const header = document.createElement('div');
-    header.className = 'haq-grid-header';
-    header.setAttribute('role', 'row');
-    for (const column of columns) header.append(this._cell(this._label(column), column, 'columnheader'));
-    grid.append(header);
-    for (const row of group.rows) {
-      const element = document.createElement('div');
-      element.className = 'haq-row';
-      element.setAttribute('role', 'row');
-      for (const column of columns) {
-        const cell = this._cell(this._value(row, column), column, 'cell');
-        if (column === 'entity.state' && this._config.value_state_color) cell.style.color = this._stateColor(row);
-        if (this._isEntityLink(row, column)) cell.replaceChildren(this._entityLink(row, cell.textContent));
-        if (this._config.entity_icons && column === this._entityColumn()) {
-          const icon = this._entityIcon(row);
-          if (icon) {
-            const content = cell.children[0] || document.createElement('span');
-            if (!cell.children.length) content.textContent = cell.textContent;
-            const wrapper = document.createElement('div');
-            wrapper.className = 'haq-entity-content';
-            wrapper.append(icon, content);
-            cell.replaceChildren(wrapper);
-          }
-        }
-        element.append(cell);
-      }
-      grid.append(element);
-    }
+    for (const row of group.rows) grid.append(this._renderTile(row));
     return grid;
   }
-  _cell(value, column, role) {
+  _renderTile(row) {
+    const tile = document.createElement('div');
+    tile.className = 'haq-tile';
+    const entityColumn = this._entityColumn();
+    if (this._config.entity_icons && entityColumn) {
+      const icon = this._entityIcon(row);
+      if (icon) tile.append(icon);
+    }
+    const content = document.createElement('div');
+    content.className = 'haq-tile-content';
+    for (const column of this._displayColumns()) {
+      const cell = this._cell(this._value(row, column), column, column === entityColumn);
+      if (column === 'entity.state' && this._config.value_state_color) cell.style.color = this._stateColor(row);
+      if (this._isEntityLink(row, column)) cell.replaceChildren(this._entityLink(row, cell.textContent));
+      content.append(cell);
+    }
+    tile.append(content);
+    return tile;
+  }
+  _cell(value, column, primary) {
     const cell = document.createElement('div');
     cell.className = 'haq-cell';
-    if (role === 'columnheader') cell.classList.add('haq-column-header');
+    if (primary) cell.classList.add('haq-primary');
+    else if (column !== 'entity.state') cell.classList.add('haq-detail');
     if (['entity.state', 'battery.level', 'history.days_inactive'].includes(column)) cell.classList.add('haq-value-cell');
-    cell.setAttribute('role', role);
     cell.dataset.label = this._label(column);
     cell.textContent = value;
     return cell;
@@ -475,7 +445,7 @@ class HaQueryCard extends HTMLElement {
   }
   getCardSize() {
     const headings = this._config?.group_by === 'area' ? this._groups().length : 0;
-    return Math.max(2, Math.ceil(((this._rows?.length || 0) + headings + 2) / 3));
+    return Math.max(2, Math.ceil(((this._rows?.length || 0) + headings + 2) / 2));
   }
 }
 if (!customElements.get('ha-query-card')) customElements.define('ha-query-card', HaQueryCard);

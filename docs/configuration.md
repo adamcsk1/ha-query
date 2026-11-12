@@ -7,9 +7,9 @@ Card options sit beside `type`. Query options sit inside `query`. See [Query lan
 | Option | Type | Default | Purpose |
 | --- | --- | --- | --- |
 | `type` | string | required | Use `custom:ha-query-card` |
-| `title` | string | `HA Query` | Card heading |
+| `title` | string | omitted | Optional compact card heading |
 | `query` | mapping | required | Query source, filters, columns, sorting, and limits |
-| `group_by` | string | omitted | Set to `area` to group results into area panels |
+| `group_by` | string | omitted | Set to `area` to group result tiles under area headings |
 | `refresh_seconds` | number | `300` | Periodic refresh fallback, from 60 through 2,147,483 seconds |
 | `entity_links` | boolean | `false` | Make the displayed entity field open More Information |
 | `entity_icons` | boolean | `false` | Show the current Home Assistant entity icon |
@@ -32,11 +32,11 @@ These options belong inside `query`:
 | `limit` | number | `100` | Return 1 through 500 rows |
 | `parse_state` | boolean | `false` | Parse numbers and units embedded in entity states |
 
-An explicit column list replaces all default UI columns. For example, `device.name`, `entity.state`, and `entity.unit` display only **Device** and **State**, with the unit combined into the state value. Metadata used for grouping, links, icons, and colors does not create extra columns.
+An explicit column list replaces all default UI columns. Each result renders as a tile: the highest-priority selected entity field supplies the name, state and unit share the value line, and other selected fields have compact labels. Metadata used for grouping, links, icons, and colors does not create extra fields.
 
 ## Grouping and updates
 
-`group_by: area` renders separate responsive panels. Narrow cards use labeled rows without horizontal scrolling. The backend sorts and applies `limit` before grouping. A warning appears when matching results are truncated.
+`group_by: area` renders transparent sections with area headings and responsive tile grids. Without grouping, all results share one tile grid. Tiles fit the available width without horizontal scrolling; only the tiles have card backgrounds. The backend sorts and applies `limit` before grouping. A warning appears when matching results are truncated.
 
 The card subscribes to permission-filtered entity updates and entity, device, and area registry changes. These events refresh every query type. Bursts are combined with a 250 ms delay, and an event during a request schedules one trailing refresh.
 
@@ -52,7 +52,7 @@ Icons and links use the highest-priority selected field:
 2. `device.name`
 3. `entity_id`
 
-Only that field receives the icon or link. Device-query results have no entity links. Rows without a current entity state have no icon, but can still have a link.
+That field supplies the tile's primary name and optional link; its icon sits beside the tile text. Device-query results have no entity links. Rows without a current entity state have no icon, but can still have a link.
 
 Links open Home Assistant's More Information dialog, never an arbitrary external URL. Buttons support keyboard activation and have an accessible More Information label.
 
@@ -69,7 +69,7 @@ Overrides do not change entity metadata, filtering, sorting, or link targets.
 
 ## Names and state labels
 
-`entity_names` maps up to 500 exact entity IDs to nonempty labels of at most 256 characters. Only a selected `entity.name` cell changes. Device names, grouping, sorting, and filtering are unaffected.
+`entity_names` maps up to 500 exact entity IDs to nonempty labels of at most 256 characters. Only a selected `entity.name` value changes. Device names, grouping, sorting, and filtering are unaffected.
 
 `state_labels` maps any of `on`, `off`, `unknown`, and `unavailable` to nonempty labels of at most 64 characters. Quote the `on` and `off` keys so YAML does not parse them as booleans. Omitted states keep their raw text.
 
@@ -83,7 +83,7 @@ state_labels:
   unavailable: Offline
 ```
 
-Labels apply only to binary-sensor state cells. Colors still use the original `on` or `off` state, and links still target the original authorized entity ID. Custom names are also used in the accessible More Information label. All values are rendered as plain text.
+Labels apply only to binary-sensor state values. Colors still use the original `on` or `off` state, and links still target the original authorized entity ID. Custom names are also used in the accessible More Information label. All values are rendered as plain text.
 
 ## Binary-sensor state colors
 

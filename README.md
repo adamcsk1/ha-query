@@ -57,7 +57,7 @@ query:
   limit: 100
 ```
 
-This shows readable battery sensors, grouped by area and sorted by charge. Device names open Home Assistant's More Information dialog.
+This shows battery sensor tiles under area headings, sorted by charge. Device names open Home Assistant's More Information dialog.
 
 ## Documentation
 

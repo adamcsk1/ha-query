@@ -69,7 +69,11 @@ function descendants(node) {
   return [node, ...node.children.flatMap(descendants)];
 }
 
-test('explicit device, state and unit columns show only Device and State', async () => {
+function resultCells(node) {
+  return descendants(node).filter(element => (element.className || '').split(' ').includes('haq-cell'));
+}
+
+test('explicit device, state and unit columns render one name and state tile', async () => {
   const {card, hass, requests} = fixture();
   card.setConfig(config());
   card.hass = hass;
@@ -80,10 +84,33 @@ test('explicit device, state and unit columns show only Device and State', async
   };
   requests[0].resolve({columns: ['device.name', 'entity.state', 'entity.unit'], rows: [row]});
   await tick();
-  assert.deepEqual(descendants(card).filter(node => node.getAttribute('role') === 'columnheader')
-    .map(node => node.textContent), ['Device', 'State']);
-  assert.deepEqual(descendants(card).filter(node => node.getAttribute('role') === 'cell')
-    .map(node => node.textContent), ['Window sensor 3', 'off']);
+  const cells = resultCells(card);
+  assert.deepEqual(cells.map(node => node.textContent), ['Window sensor 3', 'off']);
+  assert(cells[0].className.includes('haq-primary'));
+  assert(cells[1].className.includes('haq-value-cell'));
+  assert.equal(descendants(card).filter(node => node.className === 'haq-tile').length, 1);
+  assert.equal(descendants(card).filter(node => node.getAttribute('role')).length, 0);
+});
+
+test('primary names and states lead tiles without changing selected columns', async () => {
+  const cases = [
+    [['entity_id', 'entity.name', 'entity.state'], ['Window', 'off', 'binary_sensor.window']],
+    [['device.id', 'device.name', 'battery.level'], ['Window device', 'device-1', '87']],
+    [['entity.state', 'entity.name'], ['Window', 'off']],
+    [['device.name', 'entity.name', 'entity.state'], ['Window', 'off', 'Window device']],
+  ];
+  for (const [columns, expected] of cases) {
+    const {card, hass, requests} = fixture();
+    card.setConfig(config());
+    card.hass = hass;
+    requests[0].resolve({columns, rows: [{
+      entity_id: 'binary_sensor.window', 'entity.name': 'Window', 'entity.state': 'off',
+      'device.id': 'device-1', 'device.name': 'Window device', 'battery.level': 87,
+    }]});
+    await tick();
+    assert.deepEqual(resultCells(card).map(node => node.textContent), expected);
+    assert.deepEqual(card._columns, columns);
+  }
 });
 
 test('state color options accept only booleans without disturbing valid configuration', () => {
@@ -111,7 +138,7 @@ test('binary sensor state coloring is opt-in and uses HA theme fallback order', 
       'area.id': 'hall', 'area.name': 'Hall',
     }))});
     await tick();
-    const cells = descendants(card).filter(node => node.getAttribute('role') === 'cell');
+    const cells = resultCells(card);
     assert.deepEqual(cells.map(node => node.textContent), ['Door', 'on', 'Door', 'off']);
     assert.equal(cells[0].style.color, undefined);
     for (const [cell, state, active] of [[cells[1], 'on', 'active'], [cells[3], 'off', 'inactive']]) {
@@ -119,7 +146,6 @@ test('binary sensor state coloring is opt-in and uses HA theme fallback order', 
         ? `var(--state-binary_sensor-door-${state}-color, var(--state-binary_sensor-${state}-color, var(--state-binary_sensor-${active}-color, var(--state-${active}-color, var(--primary-text-color)))))`
         : undefined);
     }
-    assert(descendants(card).filter(node => node.getAttribute('role') === 'columnheader').every(node => !node.style.color));
   }
 });
 
@@ -137,7 +163,7 @@ test('coloring stays neutral for nonbinary and missing states and rejects CSS in
   ];
   requests[0].resolve({columns: ['entity.state'], rows});
   await tick();
-  const cells = descendants(card).filter(node => node.getAttribute('role') === 'cell');
+  const cells = resultCells(card);
   assert(cells.slice(0, 9).every(node => node.style.color === ''));
   assert(cells.slice(9).every(node => node.style.color ===
     'var(--state-binary_sensor-on-color, var(--state-binary_sensor-active-color, var(--state-active-color, var(--primary-text-color))))'));
@@ -161,7 +187,7 @@ test('value and icon state colors are independent and use the query snapshot', a
         entity_id: 'binary_sensor.unknown', domain: 'binary_sensor', 'device.name': 'Unknown', 'entity.state': 'unknown',
       }]});
       await tick();
-      const cells = descendants(card).filter(node => node.getAttribute('role') === 'cell' && node.dataset.label === 'State');
+      const cells = resultCells(card).filter(node => node.dataset.label === 'State');
       const icons = descendants(card).filter(node => node.tag === 'ha-state-icon');
       const value = cells[0];
       const icon = icons[0];
@@ -182,13 +208,13 @@ test('refreshing state removes active color when sensor becomes unavailable', as
     {domain: 'binary_sensor', 'entity.state': 'on', 'entity.device_class': 'motion'},
   ]});
   await tick();
-  assert(descendants(card).find(node => node.getAttribute('role') === 'cell').style.color.includes('motion-on'));
+  assert(resultCells(card)[0].style.color.includes('motion-on'));
   [...intervals.values()][0].callback();
   requests[1].resolve({columns: ['entity.state', 'entity.unit'], rows: [
     {domain: 'binary_sensor', 'entity.state': 'unavailable', 'entity.device_class': 'motion'},
   ]});
   await tick();
-  const cell = descendants(card).find(node => node.getAttribute('role') === 'cell');
+  const cell = resultCells(card)[0];
   assert.equal(cell.textContent, 'unavailable');
   assert.equal(cell.style.color, '');
 });
@@ -202,7 +228,7 @@ test('entity_links is strict, opt-in, and preserves name text', async () => {
       {entity_id: 'binary_sensor.front_door', 'entity.name': 'Front door', 'entity.state': 'on'},
     ]});
     await tick();
-    const cells = descendants(card).filter(node => node.getAttribute('role') === 'cell');
+    const cells = resultCells(card);
     assert.equal(cells[0].textContent, 'Front door');
     assert.equal(descendants(card).filter(node => node.tag === 'button').length, 0);
     assert.deepEqual(card.events, []);
@@ -225,7 +251,7 @@ test('entity links open HA more-info with keyboard access and no URLs', async ()
     {entity_id: 'binary_sensor.front_door', 'entity.name': '<b>Front door</b>', 'entity.state': 'on'},
   ]});
   await tick();
-  const cells = descendants(card).filter(node => node.getAttribute('role') === 'cell');
+  const cells = resultCells(card);
   const button = cells[0].children[0];
   assert.equal(button.tag, 'button');
   assert.equal(button.type, 'button');
@@ -268,7 +294,7 @@ test('entity link priority is name, then device, then ID with exactly one link',
       entity_id: 'binary_sensor.front_door', 'entity.name': 'Entity name', 'device.name': 'Device name', 'entity.state': 'off', 'entity.unit': '',
     }]});
     await tick();
-    const cells = descendants(card).filter(node => node.getAttribute('role') === 'cell');
+    const cells = resultCells(card);
     const linkedCells = cells.filter(cell => cell.children.some(child => child.tag === 'button'));
     assert.equal(linkedCells.length, 1);
     assert.equal(linkedCells[0].dataset.label, expectedColumn);
@@ -293,7 +319,7 @@ test('entity ID links are fallback only without entity name column', async () =>
   ];
   requests[0].resolve({columns: ['entity_id', 'entity.state'], rows});
   await tick();
-  const cells = descendants(card).filter(node => node.getAttribute('role') === 'cell');
+  const cells = resultCells(card);
   assert.equal(cells[0].children[0].tag, 'button');
   assert.equal(cells[0].children[0].textContent, 'sensor.valid');
   assert.equal(cells[0].children[0].getAttribute('aria-label'), 'More information: sensor.valid');
@@ -304,9 +330,10 @@ test('entity ID links are fallback only without entity name column', async () =>
   [...intervals.values()][0].callback();
   requests[1].resolve({columns: ['entity_id', 'entity.name'], rows: [{entity_id: 'sensor.valid', 'entity.name': 'Readable'}]});
   await tick();
-  const namedCells = descendants(card).filter(node => node.getAttribute('role') === 'cell');
-  assert.equal(namedCells[0].children.length, 0);
-  assert.equal(namedCells[1].children[0].tag, 'button');
+  const namedCells = resultCells(card);
+  assert.equal(namedCells[0].children[0].tag, 'button');
+  assert.equal(namedCells[0].children[0].textContent, 'Readable');
+  assert.equal(namedCells[1].children.length, 0);
 });
 
 test('refresh replaces links and disables them after entity_links becomes false', async () => {
@@ -346,7 +373,7 @@ test('display mappings customize binary states and exact entity names only', asy
     {entity_id: 'binary_sensor.null', domain: 'binary_sensor', 'entity.name': 'Null', 'entity.state': null},
   ]});
   await tick();
-  assert.deepEqual(descendants(card).filter(node => node.getAttribute('role') === 'cell').map(node => node.textContent), [
+  assert.deepEqual(resultCells(card).map(node => node.textContent), [
     'Front entrance', 'Open', 'Back door', 'Closed', 'Unknown', 'No reading', 'Offline', 'Offline',
     'Custom', 'other', 'Not binary', 'on', 'Null', '-',
   ]);
@@ -362,7 +389,7 @@ test('display mappings preserve state colors, link targets, and safe accessible 
     entity_id: entityId, domain: 'binary_sensor', 'entity.device_class': 'door', 'entity.name': 'Original', 'entity.state': 'on',
   }]});
   await tick();
-  const cells = descendants(card).filter(node => node.getAttribute('role') === 'cell');
+  const cells = resultCells(card);
   const link = cells[0].children[0];
   assert.equal(link.textContent, '<b>Front entrance</b>');
   assert.equal(link.getAttribute('aria-label'), 'More information: <b>Front entrance</b>');
@@ -424,7 +451,10 @@ test('entity icons are opt-in and use live HA states with exact ID overrides', a
   assert.equal(icons[1].icon, undefined);
   assert(icons.every(icon => icon.hass === hass && icon.getAttribute('aria-hidden') === 'true'));
   assert(icons.every(icon => icon.children.length === 0));
-  assert.equal(descendants(card).filter(node => node.className === 'haq-entity-content').length, 2);
+  const tiles = descendants(card).filter(node => node.className === 'haq-tile');
+  assert.equal(tiles.length, 3);
+  assert.equal(tiles.filter(tile => descendants(tile).some(node => node.tag === 'ha-state-icon')).length, 2);
+  assert.equal(descendants(card).filter(node => node.className === 'haq-tile-content').length, 3);
   assert.equal(descendants(card).filter(node => node.tag === 'button').length, 3);
   const replacement = {...front, state: 'off'};
   hass.states['binary_sensor.front_door'] = replacement;
@@ -446,10 +476,11 @@ test('entity icons preserve plain text without enabling links', async () => {
     entity_id: 'binary_sensor.front_door', 'entity.name': 'Front door', 'entity.state': 'on',
   }]});
   await tick();
-  const content = descendants(card).find(node => node.className === 'haq-entity-content');
-  assert.equal(content.children[0].tag, 'ha-state-icon');
-  assert.equal(content.children[0].stateObj, stateObj);
-  assert.equal(content.children[1].textContent, 'Front door');
+  const tile = descendants(card).find(node => node.className === 'haq-tile');
+  assert.equal(tile.children[0].tag, 'ha-state-icon');
+  assert.equal(tile.children[0].stateObj, stateObj);
+  assert.equal(tile.children[1].className, 'haq-tile-content');
+  assert.equal(tile.children[1].children[0].textContent, 'Front door');
   assert.equal(descendants(card).filter(node => node.tag === 'button').length, 0);
 });
 
@@ -860,7 +891,20 @@ test('reconnect during old request starts new fetch after completion', async () 
   assert.equal(card._rows.length, 0);
 });
 
-test('renders untrusted title, warning, header and cell as text', async () => {
+test('title is optional and the outer container has no HA card surface', async () => {
+  const {card, hass} = fixture();
+  card.setConfig(config());
+  card.hass = hass;
+  assert.equal(descendants(card).filter(node => node.tag === 'h3').length, 0);
+  assert.equal(descendants(card).filter(node => node.tag === 'ha-card').length, 0);
+  assert.equal(descendants(card).find(node => node.className === 'haq-card').tag, 'div');
+  card.setConfig({...config(), title: 'Room temperatures'});
+  assert.equal(descendants(card).find(node => node.tag === 'h3').textContent, 'Room temperatures');
+  card.setConfig({...config(), title: ''});
+  assert.equal(descendants(card).filter(node => node.tag === 'h3').length, 0);
+});
+
+test('renders untrusted title, warning and cell as text', async () => {
   const {card, hass, requests} = fixture();
   const payload = '<img src=x onerror=alert(1)>';
   card.setConfig({...config(), title: payload});
@@ -868,7 +912,7 @@ test('renders untrusted title, warning, header and cell as text', async () => {
   assert(descendants(card).some(node => node.textContent === 'Loading…'));
   requests[0].resolve({rows: [{[payload]: payload}], columns: [payload], warnings: [payload]});
   await tick();
-  assert.equal(descendants(card).filter(node => node.textContent === payload).length, 4);
+  assert.equal(descendants(card).filter(node => node.textContent === payload).length, 3);
   assert.equal(descendants(card).filter(node => node.tag === 'img').length, 0);
 });
 
@@ -880,7 +924,10 @@ test('generic object attributes render as JSON text', async () => {
     {'area.id': 'office', 'area.name': 'Office', 'entity.attributes.config': {mode: 'reading'}},
   ]});
   await tick();
-  assert(descendants(card).some(node => node.getAttribute('role') === 'cell' && node.textContent === '{"mode":"reading"}'));
+  const cell = resultCells(card)[0];
+  assert.equal(cell.textContent, '{"mode":"reading"}');
+  assert(cell.className.includes('haq-detail'));
+  assert.equal(cell.dataset.label, 'config');
 });
 
 test('current failure shows error and successful retry clears it', async () => {
@@ -918,11 +965,11 @@ test('area groups are alphabetical, unassigned last, with row ordering preserved
   ]});
   await tick();
   assert.deepEqual(descendants(card).filter(n => n.tag === 'h4').map(n => n.textContent), ['Kitchen', 'Office', 'Unassigned']);
-  const tables = descendants(card).filter(n => n.getAttribute('role') === 'table');
-  assert.equal(tables.length, 3);
-  assert.deepEqual(descendants(tables[0]).filter(n => n.getAttribute('role') === 'cell').map(n => n.textContent), ['3', '-']);
-  assert.deepEqual(descendants(tables[1]).filter(n => n.getAttribute('role') === 'cell').map(n => n.textContent), ['2', '4']);
-  assert.equal(card.getCardSize(), 4);
+  const grids = descendants(card).filter(n => n.className === 'haq-grid');
+  assert.equal(grids.length, 3);
+  assert.deepEqual(resultCells(grids[0]).map(n => n.textContent), ['3', '-']);
+  assert.deepEqual(resultCells(grids[1]).map(n => n.textContent), ['2', '4']);
+  assert.equal(card.getCardSize(), 5);
 });
 
 test('area identity prevents duplicate names and Unassigned names merging', async () => {
@@ -936,7 +983,7 @@ test('area identity prevents duplicate names and Unassigned names merging', asyn
     {},
   ]});
   await tick();
-  assert.equal(descendants(card).filter(n => n.getAttribute('role') === 'table').length, 4);
+  assert.equal(descendants(card).filter(n => n.className === 'haq-grid').length, 4);
   assert.equal(card._groups().at(-1).id, null);
 });
 
@@ -954,7 +1001,7 @@ test('area headings render as plain text and truncation warnings remain visible'
   assert(!descendants(card).some(n => n.tag === 'script'));
 });
 
-test('responsive CSS uses contained grids and labeled narrow rows', async () => {
+test('responsive CSS uses auto-fitting tiles and labels extra fields', async () => {
   const {card, hass, requests} = fixture();
   card.setConfig({...config(), group_by: 'area'});
   card.hass = hass;
@@ -963,21 +1010,22 @@ test('responsive CSS uses contained grids and labeled narrow rows', async () => 
   ]});
   await tick();
   const styles = descendants(card).find(node => node.tag === 'style').textContent;
-  assert(styles.includes('repeat(auto-fit, minmax(min(100%, 320px), 1fr))'));
-  assert(styles.includes('@container (max-width: 440px)'));
-  const mobile = styles.split('@container (max-width: 440px)')[1];
-  assert(mobile.includes('.haq-grid { display: block; }'));
-  assert(mobile.includes('.haq-grid-header { display: none; }'));
+  assert(styles.includes('repeat(auto-fit, minmax(min(100%, 280px), 1fr))'));
+  assert(styles.includes('.haq-tile {'));
+  assert(styles.includes('background: var(--card-background-color)'));
+  assert(!styles.includes('background: var(--secondary-background-color)'));
   assert(styles.includes('content: attr(data-label)'));
   assert(styles.includes('overflow-wrap: anywhere'));
-  const cells = descendants(card).filter(node => node.getAttribute('role') === 'cell');
+  assert(!styles.includes('@container'));
+  const cells = resultCells(card);
   assert.deepEqual(cells.map(node => node.dataset.label), ['Entity', 'Device']);
-  assert.equal(descendants(card).filter(node => node.tag === 'table').length, 0);
-  assert.equal(descendants(card).find(node => node.getAttribute('role') === 'table').style.gridTemplateColumns,
-    'repeat(2, minmax(0, 1fr))');
+  assert(cells[0].className.includes('haq-primary'));
+  assert(cells[1].className.includes('haq-detail'));
+  assert.equal(descendants(card).filter(node => ['table', 'ha-card'].includes(node.tag)).length, 0);
+  assert.equal(descendants(card).filter(node => node.getAttribute('role')).length, 0);
 });
 
-test('area panels have accessible names and separate result counts', async () => {
+test('area sections have accessible names, headings and separate tile grids', async () => {
   const {card, hass, requests} = fixture();
   card.setConfig({...config(), group_by: 'area'});
   card.hass = hass;
@@ -987,12 +1035,12 @@ test('area panels have accessible names and separate result counts', async () =>
     {'area.id': 'office', 'area.name': 'Office', 'entity.state': 3},
   ]});
   await tick();
-  const panels = descendants(card).filter(node => node.className === 'haq-group');
-  assert.equal(panels.length, 2);
-  assert.deepEqual(panels.map(node => node.getAttribute('aria-label')), ['Kitchen', 'Office']);
-  assert.deepEqual(panels.map(node => descendants(node).find(n => n.className === 'haq-count').textContent), ['2', '1']);
-  assert.equal(descendants(card).filter(node => node.getAttribute('role') === 'columnheader').length, 2);
-  assert.equal(descendants(card).filter(node => node.getAttribute('role') === 'row').length, 5);
+  const sections = descendants(card).filter(node => node.className === 'haq-group');
+  assert.equal(sections.length, 2);
+  assert.deepEqual(sections.map(node => node.getAttribute('aria-label')), ['Kitchen', 'Office']);
+  assert.deepEqual(sections.map(node => descendants(node).filter(n => n.className === 'haq-tile').length), [2, 1]);
+  assert.equal(descendants(card).filter(node => node.className === 'haq-count').length, 0);
+  assert.equal(descendants(card).filter(node => node.getAttribute('role')).length, 0);
 });
 
 test('state and unit share one value cell without losing unit-only queries', async () => {
@@ -1004,22 +1052,25 @@ test('state and unit share one value cell without losing unit-only queries', asy
     {'entity.state': null, 'entity.unit': '%'},
   ]});
   await tick();
-  assert.deepEqual(descendants(card).filter(node => node.getAttribute('role') === 'columnheader').map(n => n.textContent), ['State']);
-  assert.deepEqual(descendants(card).filter(node => node.getAttribute('role') === 'cell').map(n => n.textContent), ['95%', '10 W', '-']);
+  assert.deepEqual(resultCells(card).map(n => n.textContent), ['95%', '10 W', '-']);
   card.setConfig(config());
   requests[1].resolve({columns: ['entity.unit'], rows: [{'entity.unit': 'W'}]});
   await tick();
-  assert.deepEqual(descendants(card).filter(node => node.getAttribute('role') === 'columnheader').map(n => n.textContent), ['Unit']);
+  const unit = resultCells(card)[0];
+  assert.equal(unit.textContent, 'W');
+  assert.equal(unit.dataset.label, 'Unit');
+  assert(unit.className.includes('haq-detail'));
 });
 
-test('no grouping keeps one table; empty grouped card has no headings', async () => {
+test('no grouping keeps one tile grid; empty grouped card has no headings', async () => {
   const {card, hass, requests} = fixture();
   assert.equal(card.getCardSize(), 2);
   card.setConfig(config());
   card.hass = hass;
   requests[0].resolve({columns: ['entity.state'], rows: [{'area.id': 'one'}, {'area.id': 'two'}]});
   await tick();
-  assert.equal(descendants(card).filter(n => n.getAttribute('role') === 'table').length, 1);
+  assert.equal(descendants(card).filter(n => n.className === 'haq-grid').length, 1);
+  assert.equal(descendants(card).filter(n => n.className === 'haq-tile').length, 2);
   assert.equal(descendants(card).filter(n => n.tag === 'h4').length, 0);
   card.setConfig({...config(), group_by: 'area'});
   requests[1].resolve({rows: [], columns: []});
